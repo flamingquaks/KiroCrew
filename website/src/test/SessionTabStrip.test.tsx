@@ -47,6 +47,7 @@ function renderStrip(props: {
         activeKey={props.activeKey ?? props.tabs[0] ?? null}
         onSelect={onSelect}
         onClose={onClose}
+        onReorder={vi.fn()}
       />
     </Provider>,
   )
@@ -286,13 +287,13 @@ describe('SessionTabStrip interaction', () => {
     try {
       const { rerender } = render(
         <Provider store={makeStore()}>
-          <SessionTabStrip tabs={['chat-1', 'chat-2']} activeKey="chat-1" cue={null} onSelect={vi.fn()} onClose={vi.fn()} />
+          <SessionTabStrip tabs={['chat-1', 'chat-2']} activeKey="chat-1" cue={null} onSelect={vi.fn()} onClose={vi.fn()} onReorder={vi.fn()} />
         </Provider>,
       )
       expect(screen.getByTestId('session-tab-chat-1').getAttribute('data-cued')).toBeNull()
       rerender(
         <Provider store={makeStore()}>
-          <SessionTabStrip tabs={['chat-1', 'chat-2']} activeKey="chat-1" cue={{ key: 'chat-1', at: 1 }} onSelect={vi.fn()} onClose={vi.fn()} />
+          <SessionTabStrip tabs={['chat-1', 'chat-2']} activeKey="chat-1" cue={{ key: 'chat-1', at: 1 }} onSelect={vi.fn()} onClose={vi.fn()} onReorder={vi.fn()} />
         </Provider>,
       )
       expect(screen.getByTestId('session-tab-chat-1').getAttribute('data-cued')).toBe('true')
@@ -316,7 +317,7 @@ describe('SessionTabStrip interaction', () => {
     // explanation entirely.
     render(
       <Provider store={makeStore()}>
-        <SessionTabStrip tabs={['chat-1', 'chat-2']} activeKey="chat-1" connected={false} onSelect={vi.fn()} onClose={vi.fn()} />
+        <SessionTabStrip tabs={['chat-1', 'chat-2']} activeKey="chat-1" connected={false} onSelect={vi.fn()} onClose={vi.fn()} onReorder={vi.fn()} />
       </Provider>,
     )
     const tab = screen.getByTestId('session-tab-chat-2')
