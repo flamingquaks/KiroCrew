@@ -536,7 +536,13 @@ def _url_payload_command(n: int) -> str:
 #: Raised by 8, from 32,635, for the ``rm`` floor's program word: an unquoted
 #: ``$x`` / ``${…}`` / ``$1`` there may be unset, so ``${x}rm`` is read as ``rm``.
 #: A word already read as ``rm`` keeps that reading. Deny-only: no allow widened.
-_PACKAGE_LINE_BUDGET = 32_643
+#:
+#: Set to the true count, 32,640: the package is 32,587 lines without
+#: ``readonly_bash.command_names_git``, the no-approver hook surface's fail-closed
+#: git check, which adds 53: quote and backslash removal, a ``git`` word search, and
+#: the short list of programs that run none of their arguments. It models no shell
+#: grammar, so it refuses more than it must rather than less.
+_PACKAGE_LINE_BUDGET = 32_640
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second

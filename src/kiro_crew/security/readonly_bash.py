@@ -1572,6 +1572,59 @@ def _runs_git_at_a_command_position(words: list[str]) -> bool:
     return False
 
 
+#: Programs that never run a word of their argv, so ``git`` among their arguments is
+#: text (``grep -rn git docs/``). Kept short on purpose: ``find`` (``-exec``), ``sed``
+#: (``e``), ``awk`` (``system``), ``sort`` (``--compress-program``) and ``printf -v``
+#: (an array subscript Bash evaluates) can all run one.
+_INERT_ARGUMENT_PROGRAMS = frozenset(
+    {"cat", "cut", "echo", "egrep", "fgrep", "grep", "head", "ls", "rg", "tail"}
+    | {"tr", "uniq", "wc", "which"}
+)
+
+#: ``git`` as a word of its own anywhere in a word (``$(git``, ``--x=git``), or glued
+#: to a one-letter option (``env -S'git commit'`` is the word ``-Sgit``).
+_GIT_WORD_RE = re.compile(r"(?:(?<![\w.-])|(?<=^-[A-Za-z]))git(?:\.exe)?(?![\w.-])", re.IGNORECASE)
+
+#: A ``NAME=value`` word whose value is one plain word, so it only sets a variable.
+_PLAIN_ASSIGNMENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=[\w./:@+,-]*")
+
+#: Shell syntax that makes a command more than one simple command, or runs another.
+_NOT_SIMPLE_CHARS = frozenset(";&|<>()`$\n\r")
+
+
+def command_names_git(cmd: str) -> bool:
+    """Whether ``cmd`` may run ``git``: the no-approver hook surface's fail-closed check.
+
+    The quotes and backslashes are removed, and if a ``git`` word is left anywhere the
+    command is read as git, unless it is one simple command (no separator, pipe,
+    redirection, substitution or expansion) whose program runs none of its arguments
+    (``grep -rn git docs/``). No shell grammar is modelled, so a construct that runs
+    git refuses whatever its spelling, and a command that only mentions git refuses
+    too; an operator lifts that for the surface with a hook grant. A program spelled
+    without a ``git`` word (an expansion, an interpreter) is not read here.
+    """
+    # A line continuation joins the words around it before anything else is read.
+    joined = cmd.replace("\\\n", "")
+    unquoted = joined.replace("'", "").replace('"', "")
+    # Backslashes are read both ways: removed, as the shell removes them (``g\it``),
+    # and as a Windows path separator (``C:\tools\git.exe``).
+    readings = (unquoted.replace("\\", ""), unquoted.replace("\\", "/"))
+    for text in readings:
+        words = text.split()
+        if not any(
+            _GIT_WORD_RE.search(word) and not _PLAIN_ASSIGNMENT_RE.fullmatch(word) for word in words
+        ):
+            continue
+        if _NOT_SIMPLE_CHARS.intersection(text):
+            return True
+        program = words[0].rsplit("/", 1)[-1].lower()
+        if program not in _INERT_ARGUMENT_PROGRAMS:
+            return True
+        if program == "rg" and any(word.startswith("--pre") for word in words):
+            return True
+    return False
+
+
 def writes_through_redirect(cmd: str) -> bool:
     """Whether ``cmd`` writes through a redirect: :func:`_classify_bash`'s rule alone.
 

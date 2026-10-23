@@ -121,6 +121,7 @@ class _RecordingProvider:
     def __init__(self) -> None:
         self.approved: list[str] = []
         self.rejected: list[str] = []
+        self.deny_reasons: list[str] = []
 
     async def approve_tool(self, request_id: str) -> None:
         self.approved.append(request_id)
@@ -147,6 +148,12 @@ async def _resolve_headless(command: str, approver: object = None) -> _Recording
         return None
 
     provider = _RecordingProvider()
+
+    async def _record_deny(_provider: object, _event: object, reason: str, **_kw: object) -> None:
+        provider.deny_reasons.append(reason)
+
+    import kiro_crew.llm_helpers as llm_helpers_mod
+
     event = LLMEvent(
         kind=EVENT_PERMISSION_REQUEST,
         title=f"Running: {command}",
@@ -157,6 +164,7 @@ async def _resolve_headless(command: str, approver: object = None) -> _Recording
     with (
         patch.object(sel_mod, "sel", lambda: MagicMock()),
         patch.object(name_grant, "refusal_for_event", _clean),
+        patch.object(llm_helpers_mod, "_steer_host_deny", _record_deny),
     ):
         await _resolve_permission(
             provider,  # type: ignore[arg-type]
@@ -175,6 +183,64 @@ async def test_a_git_read_is_refused_where_no_approver_exists(command: str) -> N
     git unchecked; it is refused instead."""
     provider = await _resolve_headless(command)
     assert (provider.approved, provider.rejected) == ([], ["r1"])
+    assert provider.deny_reasons == [_NO_APPROVER_GIT_REASON]
+
+
+#: The refusal the no-approver git branch sends, so a test can tell it from a hook deny.
+_NO_APPROVER_GIT_REASON = (
+    "this command may run git, which runs programs its repository config "
+    "names, so it is never run without an approval and this surface has no "
+    "approver; grant it in the hook's auto_approve_tools to allow it here"
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command",
+    ["git commit -m wip", "git checkout -b topic", "make && git add -A", "env git merge topic"],
+)
+async def test_a_git_write_is_refused_where_no_approver_exists(command: str) -> None:
+    """A git command that is not a read runs repository-configured programs too
+    (hooks), so with no approver it is refused like a git read."""
+    assert is_read_only_bash(command) is False
+    provider = await _resolve_headless(command)
+    assert (provider.approved, provider.rejected) == ([], ["r1"])
+    assert provider.deny_reasons == [_NO_APPROVER_GIT_REASON]
+
+
+@pytest.mark.asyncio
+async def test_a_git_write_still_reaches_an_approver_that_exists() -> None:
+    async def _approve(_event: object) -> bool:
+        return True
+
+    provider = await _resolve_headless("git commit -m wip", _approve)
+    assert (provider.approved, provider.rejected) == (["r1"], [])
+
+
+@pytest.mark.asyncio
+async def test_a_non_git_write_keeps_the_hook_based_default_where_no_approver_exists() -> None:
+    """Only git is refused: a non-git command the hook allows keeps the surface's
+    default, so the refusal is scoped to what runs repository-configured programs."""
+    provider = await _resolve_headless("touch notes.txt")
+    assert (provider.approved, provider.rejected) == (["r1"], [])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("command", ["pytest $(ls tests)", "cat <(ls) > out.txt", "$EDITOR notes"])
+async def test_an_unreadable_non_git_write_keeps_the_hook_based_default(command: str) -> None:
+    """A command whose program cannot be read from its text, and that is not a read,
+    is not refused as git: it keeps the surface's default, as before."""
+    assert is_read_only_bash(command) is False
+    provider = await _resolve_headless(command)
+    assert (provider.approved, provider.rejected) == (["r1"], [])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("command", ["echo $(git rev-parse HEAD) > out.txt", "make `git describe`"])
+async def test_git_inside_a_substitution_is_refused_where_no_approver_exists(command: str) -> None:
+    provider = await _resolve_headless(command)
+    assert (provider.approved, provider.rejected) == ([], ["r1"])
+    assert provider.deny_reasons == [_NO_APPROVER_GIT_REASON]
 
 
 @pytest.mark.asyncio
@@ -210,3 +276,155 @@ def test_the_heartbeat_approver_still_approves_plain_reads(command: str) -> None
     from kiro_crew.slack.gateway import _is_heartbeat_safe_tool
 
     assert _is_heartbeat_safe_tool(_shell(command))
+
+
+@pytest.mark.parametrize(
+    ("command", "names_git"),
+    [
+        ("git status", True),
+        ("ls && GIT_DIR=x git log", True),
+        ("echo $(git status)", True),
+        ("echo $(date)", False),
+        ("$EDITOR notes", False),
+        ("ls git-notes", False),
+        ("xargs git add", True),
+        ("timeout 5 git fetch", True),
+        ("timeout --signal KILL 5 git fetch", True),
+        ("sudo -u builder env -i PATH=/usr/bin git push", True),
+        ("nice nohup git gc", True),
+    ],
+)
+def test_command_names_git_reads_a_git_word(command: str, names_git: bool) -> None:
+    from kiro_crew.security.readonly_bash import command_names_git
+
+    assert command_names_git(command) is names_git
+
+
+#: git written with the shell's quoting or escaping, which the shell removes before it
+#: looks the program up, or as a Windows path.
+QUOTED_GIT_COMMANDS = [
+    'g"it" checkout -b topic',
+    "g'it' status",
+    "$'git' commit -m wip",
+    '"git" add -A',
+    "\\git fetch",
+    'echo "$(printf ")"; git status)" > out.txt',
+    "bash -c 'g\\it checkout -b topic'",
+    "eval 'g\\it commit -m wip'",
+    "echo ${a['$(git checkout -b topic)']}",
+    "C:\\tools\\git.exe status",
+    "gi\\\nt commit -m wip",
+    "bash -c 'g\\\nit checkout -b topic'",
+]
+
+#: git at a command position past a glued redirection, a conditional or loop keyword,
+#: or an fd-name redirection.
+POSITIONED_GIT_COMMANDS = [
+    "git>&2 checkout -b topic",
+    "git<msg.txt commit -F -",
+    '"git">out.txt commit -m wip',
+    "if git checkout -b topic; then echo done; fi",
+    "while git fetch; do sleep 1; done",
+    "until git pull; do sleep 1; done",
+    "coproc git fetch",
+    "{fd}>log.txt git commit -m wip",
+]
+
+#: git inside a ``case`` arm or a function body, in a runner option that carries a
+#: command (``env -S``), after ``rg --pre`` or ``find -exec``, in an ``eval`` or
+#: ``bash -c`` script, a nested escaped backtick, or a ``printf -v`` destination
+#: whose array subscript Bash evaluates.
+COMPOUND_GIT_COMMANDS = [
+    "case x in x) git checkout -b topic;; esac",
+    "f() { git commit -m wip; }; f",
+    "function f { git commit -m wip; }; f",
+    'env -S "git commit -m wip"',
+    "env --split-string='git checkout -b topic'",
+    "env -S'git commit'",
+    "rg --pre git pattern .",
+    "find . -name '*.md' -exec git add {} +",
+    "eval 'v=1 git commit -m wip'",
+    'bash -c "v=1 git commit"',
+    "echo `echo \\`git commit -m wip\\``",
+    "printf -v 'a[$(git commit -m wip)]' %s foo",
+]
+
+#: Commands that only mention git but are more than one simple command of a program
+#: that runs none of its arguments: a pipe, a runner, a redirection, or a separator
+#: inside quotes. Refused on purpose, as the fail-closed cost; a hook grant lifts it.
+MENTIONS_GIT_COMMANDS = [
+    "find . -name '*.md' | xargs grep -ln git",
+    "xargs -a files.txt grep -n 'git'",
+    "timeout 60 rg -n git docs/",
+    "nice -n 10 grep -rn git src/",
+    "env LC_ALL=C grep -c git CHANGELOG.md",
+    'echo "ordinary; git documentation" > notes.txt',
+    "echo 'a | git b' > out.txt",
+    "echo '$(git log)' > out.txt",
+    'cat "x && git y" > out.txt',
+    "grep -c git>count.txt README.md",
+]
+
+REFUSED_COMMANDS = (
+    QUOTED_GIT_COMMANDS + POSITIONED_GIT_COMMANDS + COMPOUND_GIT_COMMANDS + MENTIONS_GIT_COMMANDS
+)
+
+#: ``git`` as text of one simple command whose program runs none of its arguments, or
+#: as a variable's plain value, and commands that carry no ``git`` word at all.
+KEEPS_DEFAULT_COMMANDS = [
+    "grep -rn git docs/",
+    "echo 'use git here'",
+    "rg -n git docs/",
+    "make docs VCS=git",
+    "time make docs VCS=git",
+    "pytest tests/test_git_helpers.py",
+    "echo done>notes.txt",
+    "cat a.txt>b.txt",
+    "if test -f a.txt; then echo yes>out.txt; fi",
+    "pytest -q 2>&1 > out.txt",
+]
+
+
+@pytest.mark.parametrize("command", REFUSED_COMMANDS)
+def test_command_names_git_refuses_any_git_word_outside_an_inert_simple_command(
+    command: str,
+) -> None:
+    from kiro_crew.security.readonly_bash import command_names_git
+
+    assert command_names_git(command) is True
+
+
+@pytest.mark.parametrize("command", KEEPS_DEFAULT_COMMANDS)
+def test_command_names_git_passes_git_text_of_an_inert_simple_command(command: str) -> None:
+    from kiro_crew.security.readonly_bash import command_names_git
+
+    assert command_names_git(command) is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("command", REFUSED_COMMANDS)
+async def test_a_command_that_may_run_git_is_refused_where_no_approver_exists(
+    command: str,
+) -> None:
+    provider = await _resolve_headless(command)
+    assert (provider.approved, provider.rejected) == ([], ["r1"])
+    assert provider.deny_reasons == [_NO_APPROVER_GIT_REASON]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("command", KEEPS_DEFAULT_COMMANDS)
+async def test_git_text_of_an_inert_simple_command_keeps_the_hook_based_default(
+    command: str,
+) -> None:
+    provider = await _resolve_headless(command)
+    assert (provider.approved, provider.rejected) == (["r1"], [])
+
+
+@pytest.mark.timeout(60)
+def test_command_names_git_stays_linear() -> None:
+    from kiro_crew.security.readonly_bash import command_names_git
+
+    assert command_names_git("echo $(echo " * 20000 + "x" + ")" * 20000) is False
+    assert command_names_git("case x in x) echo hi;; esac; " * 40000) is False
+    assert command_names_git("x>" * 200000) is False
+    assert command_names_git("echo a; " * 40000 + "git status") is True
