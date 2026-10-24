@@ -542,7 +542,12 @@ def _url_payload_command(n: int) -> str:
 #: every address put back must be the whole URL match that starts where it lands;
 #: plus the redactor's ``_ordered_out`` flag for a link rewritten inside a longer one.
 #: Display-time only; no redaction rule, pattern or threshold moved.
-_PACKAGE_LINE_BUDGET = 32_668
+#:
+#: Set to the measured 32,615: the package measures 32,612, plus 3 for one
+#: ``_CREW_SECRET_LEAVES`` entry in ``paths_lists``:
+#: the mediated-secret request directory (``secret-request-policy``), denied to the
+#: agent file tools as a whole. Data, not rule logic: the matcher is unchanged.
+_PACKAGE_LINE_BUDGET = 32_615
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second
