@@ -521,7 +521,13 @@ def _url_payload_command(n: int) -> str:
 #: Raised by 12, from 32,601, for the crewmate folder's state files in ``paths_lists``
 #: (owners, kits, revoked approvals, tool access, migration ledger), write-denied
 #: like the folder itself. Data, not rule logic: the matcher is unchanged.
-_PACKAGE_LINE_BUDGET = 32_613
+#:
+#: Raised by 927, from 32,613, for ``git_write``: the git write classifier
+#: the dashboard approval ladder asks before a trust, YOLO or pattern grant approves
+#: a shell call (``hooks.confirm_git_writes``), with its per-subcommand option
+#: allow-lists. A new confirm classifier, not a deny tier: no existing floor or
+#: pattern changed.
+_PACKAGE_LINE_BUDGET = 33_540
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second
