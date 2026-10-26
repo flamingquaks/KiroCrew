@@ -728,15 +728,10 @@ def _steps(lid: str, placement: str) -> list[dict[str, Any]]:
 
 
 def _pointing(lid: str, placement: str) -> list[dict[str, Any]]:
-    """The steps after a Crewmates control's preview gate, which opens every one."""
+    """A Crewmates control's steps; none opens on a preview gate."""
     steps = _steps(lid, placement)
-    assert steps[0] == {
-        "id": f"{placement}:gate:preview_flag:mc-preview-crew",
-        "kind": "gate",
-        "gate": "preview_flag:mc-preview-crew",
-        "setting_id": "developer.mates",
-    }
-    return steps[1:]
+    assert all(s.get("kind") != "gate" for s in steps)
+    return steps
 
 
 def test_delete_crewmate_walks_through_the_editor_and_never_finishes_on_its_own() -> None:

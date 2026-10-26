@@ -83,8 +83,7 @@ export function DeveloperPanel() {
         Developer Mode and the previews are the two things a reader comes to this
         tab to flip; the local-gateway switch is rare and platform-gated. */}
     <FeaturePreviewsSection />
-    {/* The crewmate feature switches, under the Crew Members preview card that
-        is their one door (`CrewmatesSection.tsx`). */}
+    {/* The crewmate feature switches (`CrewmatesSection.tsx`). */}
     <CrewmatesSection />
     {localGatewaySupported && (
       <SettingsSection title={i18nT('pages.settings.developerPanel.gateway')}>

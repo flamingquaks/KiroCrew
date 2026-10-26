@@ -45,13 +45,11 @@ def _plan(location_id: str) -> dict[str, Any]:
 
 def test_a_location_needing_a_selection_now_has_a_select_step_at_its_picker() -> None:
     steps = _plan("members.edit")["any"]
-    # The Crewmates preview's gate comes first: the picker lives on that page.
     assert [st["id"] for st in steps] == [
-        "any:gate:preview_flag:mc-preview-crew",
         "any:select:crewmate_selected",
         "any:members.edit",
     ]
-    select = steps[1]
+    select = steps[0]
     assert select["kind"] == "select" and select["selection"] == "crewmate_selected"
     assert select["location"] == "members.roster-list" and select["entity"] == "crewmate"
     # A select step opens nothing: it waits for the page's fact.
@@ -206,7 +204,6 @@ def test_a_gate_that_is_off_pauses_the_guide_naming_its_setting_and_resumes_in_p
 def test_an_empty_picker_is_needs_selection_and_names_only_the_selection() -> None:
     store = _store()
     g = _claimed(store, "members.edit", "any")
-    g = _report(store, g)  # the Crewmates preview is on: the select step is next
     g = _report(store, g, outcome="target_missing", detail="selection_empty")
     assert g["reason"] == "needs_selection"
     assert g["blocker"] == {"kind": "needs_selection", "selection": "crewmate_selected"}
@@ -236,17 +233,11 @@ def test_a_blocker_is_reported_only_by_the_step_that_waits_on_it(
 def test_a_guides_public_record_carries_no_entity_data() -> None:
     store = _store()
     g = _claimed(store, "members.edit", "any")
-    g = _report(store, g)  # past the Crewmates preview's gate
     g = _report(store, g, outcome="target_missing", detail="selection_empty")
     record = g["actions"][0]
     # Only plan ids: the record's meta and the blocker name scopes, never a row.
     assert set(g["blocker"]) == {"kind", "selection"}
     assert record["step_meta"] == {
-        "any:gate:preview_flag:mc-preview-crew": {
-            "kind": "gate",
-            "gate": "preview_flag:mc-preview-crew",
-            "setting_id": "developer.mates",
-        },
         "any:select:crewmate_selected": {"kind": "select", "selection": "crewmate_selected"},
     }
 

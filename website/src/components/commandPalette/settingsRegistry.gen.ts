@@ -1867,15 +1867,6 @@ export const SETTINGS_REGISTRY: SettingEntry[] =
     "occurrence": 1
   },
   {
-    "id": "developer.mates",
-    "label": "Mates",
-    "labelKey": "pages.developer.featurePreviewsTab.crew_members",
-    "hint": "The Mates page: every agent you have, each with its own thread. Still being built, so it is not offered until you turn this on.",
-    "tab": "developer",
-    "type": "toggle",
-    "occurrence": 1
-  },
-  {
     "id": "developer.model-for-the-small-model-judge",
     "label": "Model for the small-model judge",
     "labelKey": "pages.developer.featurePreviewsTab.decisions_judge_model",
