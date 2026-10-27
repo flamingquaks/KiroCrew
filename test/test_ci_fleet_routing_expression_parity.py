@@ -116,6 +116,20 @@ _PERMANENT_EXCEPTIONS = {
     ("ux-review.yml", "ux-review"),
     ("design-review.yml", "design-review"),
     ("ci-runner-watchdog.yml", "watchdog"),
+    # Release and publish carve off the shared standard pool for latency, not
+    # for an isolation contract: they are human-blocking and low-volume, and a
+    # release cannot wait on a pool nobody here can expedite. Every one is
+    # workflow_call, a v* tag push, or workflow_dispatch, so none adds
+    # pull-request volume to the group.
+    ("publish-cli.yml", "publish-cli"),
+    ("publish-docker.yml", "publish-docker"),
+    ("publish-installer.yml", "publish-installer"),
+    ("publish-linux.yml", "publish-linux"),
+    ("publish-windows.yml", "publish-windows"),
+    ("release.yml", "release-candidate-tests"),
+    ("release.yml", "record-stable-promotion"),
+    ("sign-and-notarize.yml", "sign"),
+    ("sign-and-notarize.yml", "publish"),
 }
 
 # A permanent exception stays OFF the CodeBuild fleet; it does not have to stay
@@ -128,6 +142,15 @@ _HOSTED_EXCEPTION_RUNNERS: dict[tuple[str, str], object] = {
     ("first-principles-review.yml", "first-principles-review"): {"group": "kirocrew-runners"},
     ("ux-review.yml", "ux-review"): {"group": "kirocrew-runners"},
     ("design-review.yml", "design-review"): {"group": "kirocrew-runners"},
+    ("publish-cli.yml", "publish-cli"): {"group": "kirocrew-runners"},
+    ("publish-docker.yml", "publish-docker"): {"group": "kirocrew-runners"},
+    ("publish-installer.yml", "publish-installer"): {"group": "kirocrew-runners"},
+    ("publish-linux.yml", "publish-linux"): {"group": "kirocrew-runners"},
+    ("publish-windows.yml", "publish-windows"): {"group": "kirocrew-runners"},
+    ("release.yml", "release-candidate-tests"): {"group": "kirocrew-runners"},
+    ("release.yml", "record-stable-promotion"): {"group": "kirocrew-runners"},
+    ("sign-and-notarize.yml", "sign"): {"group": "kirocrew-runners"},
+    ("sign-and-notarize.yml", "publish"): {"group": "kirocrew-runners"},
 }
 _DEFAULT_HOSTED_EXCEPTION_RUNNER = "ubuntu-latest"
 

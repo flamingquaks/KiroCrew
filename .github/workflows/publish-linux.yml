@@ -103,7 +103,14 @@ jobs:
     # missing the job skips rather than publishing objects it cannot
     # verify or address. GitHub Releases still carries the AppImage.
     if: ${{ inputs.publish && vars.CLI_DIST_BUCKET != '' && vars.CLI_CDN_BASE != '' }}
-    runs-on: ubuntu-latest
+    # Release and publish are low-volume and human-blocking, so they do not
+    # compete in the shared standard pool with this repository's own PR CI:
+    # a release that cannot start because another org filled that pool is
+    # blocked on something nobody here can expedite. The group is a
+    # GitHub-hosted Ubuntu VM holding no fleet credentials, so this job's
+    # isolation contract is unchanged.
+    runs-on:
+      group: kirocrew-runners
     timeout-minutes: 15
     # REQUIRED: the publish role's OIDC trust accepts exactly two subjects,
     # ref:refs/heads/main and environment:prod. Declaring the environment

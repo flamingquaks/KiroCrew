@@ -50,7 +50,14 @@ permissions:
 jobs:
   publish-installer:
     name: Publish cli.sh
-    runs-on: ubuntu-latest
+    # Release and publish are low-volume and human-blocking, so they do not
+    # compete in the shared standard pool with this repository's own PR CI:
+    # a release that cannot start because another org filled that pool is
+    # blocked on something nobody here can expedite. The group is a
+    # GitHub-hosted Ubuntu VM holding no fleet credentials, so this job's
+    # isolation contract is unchanged.
+    runs-on:
+      group: kirocrew-runners
     timeout-minutes: 30
     # Upstream only. Forks pushing to their own main have no publish role and
     # nothing to publish to; skipping at the JOB level (rather than gating each

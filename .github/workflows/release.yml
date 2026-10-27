@@ -123,7 +123,14 @@ jobs:
     name: Test Release Candidate SHA
     if: needs.version.outputs.channel == 'insider'
     needs: version
-    runs-on: ubuntu-latest
+    # Release and publish are low-volume and human-blocking, so they do not
+    # compete in the shared standard pool with this repository's own PR CI:
+    # a release that cannot start because another org filled that pool is
+    # blocked on something nobody here can expedite. The group is a
+    # GitHub-hosted Ubuntu VM holding no fleet credentials, so this job's
+    # isolation contract is unchanged.
+    runs-on:
+      group: kirocrew-runners
     # Match ci.yml's whole-file split so every runner carries a bounded part of
     # the exact-SHA gate while the matrix still covers the full test population.
     timeout-minutes: 60
@@ -1639,7 +1646,14 @@ jobs:
           needs.sign-and-notarize-arm64.result == 'success' &&
           needs.sign-and-notarize-x64.result == 'success' &&
           needs.github-release.result == 'success' }}
-    runs-on: ubuntu-latest
+    # Release and publish are low-volume and human-blocking, so they do not
+    # compete in the shared standard pool with this repository's own PR CI:
+    # a release that cannot start because another org filled that pool is
+    # blocked on something nobody here can expedite. The group is a
+    # GitHub-hosted Ubuntu VM holding no fleet credentials, so this job's
+    # isolation contract is unchanged.
+    runs-on:
+      group: kirocrew-runners
     timeout-minutes: 10
     # Editing a release needs contents:write, and this job holds nothing else:
     # no AWS identity, no package scope. Same least-privilege split as

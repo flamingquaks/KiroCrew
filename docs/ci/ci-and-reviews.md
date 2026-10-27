@@ -1043,14 +1043,25 @@ label. Boot-matrix rollback restores `runs-on: ${{ matrix.os }}`. Keep the test
 arguments and coverage unchanged. A rejected webhook leaves a job queued before
 its timeout starts; diagnose or roll back rather than raising that timeout.
 
-### Larger runners for the review lanes and CodeQL
+### Larger runners for the review lanes, CodeQL and the release path
 
-Fourteen `runs-on` sites draw on the `kirocrew-runners` larger-runner group
+Twenty-five `runs-on` sites draw on the `kirocrew-runners` larger-runner group
 rather than `ubuntu-latest`: the six fork review lanes (`fork-opus-review`,
 `fork-gpt-review`, `fork-first-principles-review`, `fork-design-review`,
 `fork-ux-review`, and all three jobs of `fork-security-scope-review`), the five
 same-repo review lanes (`codex-review`, `claude-review`,
-`first-principles-review`, `design-review`, `ux-review`), and `codeql.yml`.
+`first-principles-review`, `design-review`, `ux-review`), `codeql.yml`, both
+jobs of `docker-smoke.yml`, and the nine release and publish jobs
+(`publish-cli`, `publish-docker`, `publish-installer`, `publish-linux`,
+`publish-windows`, `release.yml`'s `release-candidate-tests` and
+`record-stable-promotion`, and `sign-and-notarize.yml`'s `sign` and `publish`).
+
+**Why the release path.** It is a latency carve-out, not a capacity one: these
+jobs hold well under one average concurrent slot between them, and the point is
+that a tagged release never waits behind another organisation's CI in a pool
+nobody here can expedite. They are safe to put on a capped group because none
+fires on a pull request: each is `workflow_call`, a `v*` tag push, or
+`workflow_dispatch`.
 
 **Why the fork lanes, and why their spend is permanent.** Fork work cannot move
 to the CodeBuild fleet, and the obstruction is structural rather than unfinished

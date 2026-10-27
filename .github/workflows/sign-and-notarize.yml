@@ -167,7 +167,14 @@ jobs:
   sign:
     name: Sign with signing service (${{ inputs.channel }})
     if: ${{ !inputs.promote }}
-    runs-on: ubuntu-latest
+    # Release and publish are low-volume and human-blocking, so they do not
+    # compete in the shared standard pool with this repository's own PR CI:
+    # a release that cannot start because another org filled that pool is
+    # blocked on something nobody here can expedite. The group is a
+    # GitHub-hosted Ubuntu VM holding no fleet credentials, so this job's
+    # isolation contract is unchanged.
+    runs-on:
+      group: kirocrew-runners
     # Upload of a ~1 GB zip plus sign.sh's 45-minute poll window (MAX_WAIT)
     # must both fit; the notarize job keeps its own budget.
     timeout-minutes: 60
@@ -668,7 +675,14 @@ jobs:
       ${{ always() && inputs.write_feed && vars.CLI_DIST_BUCKET != '' &&
           ((!inputs.promote && needs.notarize.result == 'success') ||
            (inputs.promote && needs.notarize.result == 'skipped')) }}
-    runs-on: ubuntu-latest
+    # Release and publish are low-volume and human-blocking, so they do not
+    # compete in the shared standard pool with this repository's own PR CI:
+    # a release that cannot start because another org filled that pool is
+    # blocked on something nobody here can expedite. The group is a
+    # GitHub-hosted Ubuntu VM holding no fleet credentials, so this job's
+    # isolation contract is unchanged.
+    runs-on:
+      group: kirocrew-runners
     timeout-minutes: 15
     # Same OIDC subject alignment as the jobs above (S3 writes assume the
     # signing role). No Secrets Manager access here -- the Apple credential
