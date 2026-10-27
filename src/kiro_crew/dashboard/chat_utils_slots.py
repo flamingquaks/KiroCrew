@@ -18,6 +18,7 @@ import hashlib
 import hmac
 import logging
 from dataclasses import dataclass
+from typing import Any
 
 from aiohttp import web
 
@@ -275,6 +276,34 @@ def effective_session_key(slot: _ChatSlot) -> str:
     :func:`session_key_for` for the ones that have no slot YET.
     """
     return session_key_for(slot.key, getattr(slot, "linked_session_key", "") or "")
+
+
+def revoke_slot_trust(state: Any, slot: Any) -> None:
+    """Clear *slot*'s standing trust AND the session policy cached from it.
+
+    Turn admission copies ``slot._trust`` into the session store as
+    ``approval_policy="auto"``, and the subagent spawn gate and each child's tool
+    approval read that stored value, not the flag. Clearing only the flag leaves
+    the cached ``"auto"`` in place until the parent's next turn admission, so a
+    spawn later in the running turn is still admitted and its child still
+    auto-approves every tool call after a revocation. Every revocation therefore
+    has to clear both halves.
+
+    Never raises: callers are stop paths that still have a loop to deactivate
+    after this, and a failed policy write must not skip that.
+    """
+    slot._trust = False
+    sessions = getattr(state, "sessions", None)
+    if sessions is None:
+        return
+    try:
+        sessions.set_approval_policy(effective_session_key(slot), "")
+    except Exception:
+        logger.warning(
+            "could not clear the cached approval policy for %s",
+            getattr(slot, "key", "?"),
+            exc_info=True,
+        )
 
 
 def replacement_shares_transcript(state: DashboardState, name: str, slot: _ChatSlot) -> bool:
