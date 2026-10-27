@@ -6,9 +6,9 @@ Covers RFC *mate-owned-agent-config* §5.3/§5.4 where no live pod is needed:
   user-level wins a name collision, and the crewmate's prompt anchors to its own
   folder (``resolve_projected_spec``);
 * the session agent picker (``list_agents``) does NOT see a crewmate file;
-* the eager copy projects to the SAME ``customAgents`` payload the source agent
-  would (Phase-2 payload equivalence), with a ``file://`` prompt inlined so no
-  link back to the source survives;
+* the eager copy writes a MINIMAL file (empty additions) — nothing is copied
+  from the source agent's payload, so the machine's ``mcp.json`` servers never
+  leak into a new mate; the source-defined worker base supplies the baseline;
 * the loader's materialized index recognises a crewmate id as a declared agent,
   so a binding ``kiro_agent=<id>`` survives the dangling self-heal and dispatches;
 * the mate-tools grant neither forks nor writes the owned file;
@@ -27,7 +27,7 @@ import pytest
 import kiro_crew.agent as agent_mod
 import kiro_crew.config.paths as paths_mod
 from kiro_crew.acp.harness.kas import resolve_projected_spec
-from kiro_crew.acp.kas_agents import build_kas_custom_agents, expand_kiro_cli_tool_names
+from kiro_crew.acp.kas_agents import build_kas_custom_agents
 from kiro_crew.mate_config import (
     has_mate_config,
     mate_config_path,
@@ -153,7 +153,10 @@ def _resolved(agents_dir: Path, checkout: Path, agent: str):
     return prompt_dir, agent, spec
 
 
-def test_write_mate_config_copies_payload_and_declares_the_crewmate_id(layout):
+def test_write_mate_config_writes_a_minimal_file_and_declares_the_crewmate_id(layout):
+    """RFC §5.4: the file starts with EMPTY additions — the source agent's payload
+    is NOT copied. The source-defined worker base supplies baseline capability, so
+    the machine's ``mcp.json`` servers never leak into a new mate."""
     user, mates, _checkout = layout
     _write(
         user,
@@ -174,57 +177,102 @@ def test_write_mate_config_copies_payload_and_declares_the_crewmate_id(layout):
     written = json.loads(path.read_text(encoding="utf-8"))
     # Declares the crewmate id, not the source -- so it resolves under its own id.
     assert written["name"] == "zxc"
-    assert written["tools"] == ["fs_read", "@kirocrew-core"]
-    assert written["allowedTools"] == ["fs_read"]
-    assert written["mcpServers"] == {"demo": {"command": "/bin/echo"}}
-    assert written["prompt"] == "builder prompt"
+    # Empty additions: the source's tools/servers/prompt are NOT copied in.
+    assert written["tools"] == []
+    assert written["allowedTools"] == []
+    assert written["mcpServers"] == {}
+    assert written["skills"] == []
+    assert written["resources"] == []
+    assert written["prompt"] == ""
 
 
-def test_write_mate_config_inlines_a_file_prompt_and_severs_the_link(layout):
+def test_write_mate_config_does_not_copy_the_source_mcp_servers(layout):
+    """A ``mcp.json``-sourced server on the source agent (builder-mcp, etc.) must
+    NOT land in a new mate's file — the live bug: such servers read as "added"."""
     user, _mates, _checkout = layout
-    (user / "prompts").mkdir()
-    (user / "prompts" / "b.md").write_text("literal builder prompt", encoding="utf-8")
-    _write(
-        user,
-        "builder",
-        {"name": "builder", "prompt": "file://./prompts/b.md", "tools": ["*"]},
-    )
-
-    path = write_mate_config("zxc", "builder")
-    written = json.loads(path.read_text(encoding="utf-8"))
-
-    # The prompt is literal text now; no ``file://`` link back to the source.
-    assert written["prompt"] == "literal builder prompt"
-    assert "file://" not in written["prompt"]
-
-
-def test_the_copy_projects_to_the_same_payload_as_the_source(layout):
-    """RFC Phase-2 payload equivalence: before == after."""
-    user, mates, checkout = layout
     _write(
         user,
         "builder",
         {
             "name": "builder",
-            "prompt": "builder prompt",
-            "tools": ["fs_read", "@kirocrew-core"],
-            "allowedTools": ["fs_read"],
+            "prompt": "p",
+            "mcpServers": {"builder-mcp": {"command": "b"}, "pippin-mcp": {"command": "p"}},
+            "tools": ["@builder-mcp", "@pippin-mcp"],
         },
     )
+    written = json.loads(write_mate_config("zxc", "builder").read_text(encoding="utf-8"))
+    assert written["mcpServers"] == {}
+    assert written["tools"] == []
 
-    # before: project the source agent as it stands today.
-    before = build_kas_custom_agents(*_resolved(user, checkout, "builder"))[0]
 
-    # after: eager-copy, repoint happens on the binding; project the crewmate file.
-    write_mate_config("zxc", "builder")
-    after = build_kas_custom_agents(*_resolved(mates, checkout, "zxc"))[0]
+_RESTRICTIVE = {
+    "name": "locked",
+    "prompt": "p",
+    "excludedTools": ["execute_bash"],
+    "mcpServers": {
+        # A limit on a base server's tool, and a base server switched off.
+        "kirocrew-core": {"command": "kc", "disabledTools": ["spawn_run"]},
+        "kirocrew-guide": {"disabled": True},
+    },
+    "tools": ["*"],
+}
+_BASE = {
+    "name": "kirocrew-mate-worker",
+    "prompt": "",
+    "tools": ["execute_bash", "@kirocrew-core", "@kirocrew-guide"],
+    "mcpServers": {"kirocrew-core": {"command": "kc"}, "kirocrew-guide": {"command": "kg"}},
+}
 
-    # The id differs by construction (that IS the repoint); everything the
-    # projection decides about behaviour is identical.
-    assert before["prompt"] == after["prompt"]
-    assert before["tools"] == after["tools"]
-    assert before.get("permissions") == after.get("permissions")
-    assert after["tools"] == expand_kiro_cli_tool_names(["fs_read", "@kirocrew-core"])
+
+def test_a_new_crewmate_keeps_the_templates_limits(layout, monkeypatch):
+    """The worker merge applies only the limits the crewmate's file states, so the
+    minimal file must carry the template's: a dropped ``excludedTools`` would hand
+    the worker a tool the template turned off."""
+    import kiro_crew.mate_config_migration as migration
+
+    user, _mates, _checkout = layout
+    _write(user, "locked", _RESTRICTIVE)
+    monkeypatch.setattr(migration, "_worker_base", lambda: dict(_BASE))
+    written = json.loads(write_mate_config("zxc", "locked").read_text(encoding="utf-8"))
+    assert "execute_bash" in written["excludedTools"]
+    assert "@kirocrew-core/spawn_run" in written["excludedTools"]
+    # The template's servers are still not copied as additions.
+    assert written["tools"] == [] and written["allowedTools"] == []
+
+
+def test_a_new_crewmate_keeps_tool_limits_when_the_worker_base_is_unreadable(layout, monkeypatch):
+    """With no base to diff against, every limit the template names is still
+    carried, a switched-off server included: the base is generated at boot, so a
+    dropped switch-off would launch that server once the base is readable again."""
+    import kiro_crew.mate_config_migration as migration
+
+    user, _mates, _checkout = layout
+    _write(user, "locked", _RESTRICTIVE)
+
+    def _unreadable():
+        raise OSError("no base")
+
+    monkeypatch.setattr(migration, "_worker_base", _unreadable)
+    written = json.loads(write_mate_config("zxc", "locked").read_text(encoding="utf-8"))
+    assert set(written["excludedTools"]) == {"execute_bash", "@kirocrew-core/spawn_run"}
+    assert written["mcpServers"] == {"kirocrew-guide": {"disabled": True}}
+
+
+def test_a_new_crewmate_keeps_a_non_base_servers_tool_limits(layout, monkeypatch):
+    """The file does not copy the template's server entries, so a ``disabledTools``
+    on a server the base lacks must land in ``excludedTools``: a later add that
+    supplies that server without the limit would otherwise expose the tool."""
+    import kiro_crew.mate_config_migration as migration
+
+    user, _mates, _checkout = layout
+    template = {
+        **_RESTRICTIVE,
+        "mcpServers": {"notes": {"command": "notes-mcp", "disabledTools": ["delete"]}},
+    }
+    _write(user, "locked", template)
+    monkeypatch.setattr(migration, "_worker_base", lambda: dict(_BASE))
+    written = json.loads(write_mate_config("zxc", "locked").read_text(encoding="utf-8"))
+    assert "@notes/delete" in written["excludedTools"]
 
 
 def test_write_mate_config_overwrites_an_existing_crewmate_file(layout):
@@ -235,7 +283,11 @@ def test_write_mate_config_overwrites_an_existing_crewmate_file(layout):
 
     path = write_mate_config("zxc", "builder")
 
-    assert json.loads(path.read_text(encoding="utf-8"))["prompt"] == "v2"
+    # Re-create succeeds and the file is the minimal file (the source's changed
+    # payload is never copied, so the only witness is that the re-write landed).
+    written = json.loads(path.read_text(encoding="utf-8"))
+    assert written["name"] == "zxc"
+    assert written["mcpServers"] == {} and written["tools"] == []
 
 
 def test_another_instances_crewmate_file_is_never_overwritten(layout, monkeypatch, tmp_path):
@@ -251,11 +303,14 @@ def test_another_instances_crewmate_file_is_never_overwritten(layout, monkeypatc
     monkeypatch.setattr(paths_mod, "data_home", lambda: tmp_path / "instance-b")
     with pytest.raises(MateConfigError, match="another Kiro Crew instance"):
         write_mate_config("ada", "builder")
-    assert json.loads(path.read_text(encoding="utf-8"))["prompt"] == "first"
+    # The foreign instance's file survives the refused write (minimal files are
+    # byte-identical, so the witness is that it still exists and still resolves).
+    assert path.exists()
+    assert json.loads(path.read_text(encoding="utf-8"))["name"] == "ada"
 
     # The instance that wrote it may still re-create it.
     monkeypatch.setattr(paths_mod, "data_home", lambda: tmp_path / "instance-a")
-    assert json.loads(write_mate_config("ada", "builder").read_text())["prompt"] == "second"
+    assert json.loads(write_mate_config("ada", "builder").read_text())["name"] == "ada"
 
 
 def test_two_instances_writing_one_name_at_once_never_replace_each_other(
@@ -435,6 +490,46 @@ def test_a_switched_off_approval_stays_listed_and_can_be_turned_back_on(layout, 
 
     assert _row(_put("remove"))["present"] is False
     assert _row(_put("set"))["present"] is True
+
+
+def test_removing_a_server_drops_its_selectors_but_keeps_restrictions(layout, monkeypatch):
+    mc, mates = _mate_edit_env(
+        layout,
+        monkeypatch,
+        spec={
+            "name": "qwe",
+            "tools": ["fs_read", "@notes", "@notes/x", "@notes-other"],
+            "allowedTools": ["@notes", "@notes/x", "@notes-other/read"],
+            "excludedTools": ["@notes", "@notes/write", "@notes-other/write"],
+            "mcpServers": {
+                "notes": {"command": "notes-mcp"},
+                "notes-other": {"command": "other-mcp"},
+            },
+        },
+    )
+    before = json.loads((mates / "qwe.json").read_text())
+    body = {
+        "revision": mc._revision(before),
+        "operations": [{"section": "mcpServers", "id": "notes", "action": "remove"}],
+        "accept_parent": [],
+        "accept_members": [],
+    }
+    preview = mc.preview("qwe", body, {})
+    removed = {(r["section"], r["id"]) for r in preview["impact"] if r["change"] == "removed"}
+    assert removed == {
+        ("mcpServers", "notes"),
+        ("tools", "@notes"),
+        ("tools", "@notes/x"),
+        ("allowedTools", "@notes"),
+        ("allowedTools", "@notes/x"),
+    }
+    mc.put("qwe", {**body, "preview_token": preview["preview_token"]}, {})
+
+    written = json.loads((mates / "qwe.json").read_text())
+    assert set(written["mcpServers"]) == {"notes-other"}
+    assert written["tools"] == ["fs_read", "@notes-other"]
+    assert written["allowedTools"] == ["@notes-other/read"]
+    assert written["excludedTools"] == before["excludedTools"]
 
 
 def test_a_base_approval_the_file_never_listed_can_be_switched_off_and_on(layout, monkeypatch):

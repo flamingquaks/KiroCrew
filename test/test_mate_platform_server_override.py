@@ -71,9 +71,10 @@ async def test_creating_from_a_template_without_the_mate_server_writes_no_overri
             "/api/agents", json={"name": "briar", "kiro_agent": "docs-helper"}
         )
         assert response.status == 200, await response.text()
+    # The minimal file copies NO servers from the template, so a bare
+    # ``kirocrew-mate`` override cannot be written — and neither is ``notes``.
     servers = _servers(home / "mates" / "agents" / "briar.json")
-    assert "kirocrew-mate" not in servers
-    assert servers["notes"] == NOTES
+    assert servers == {}
 
 
 def test_a_template_carrying_the_bare_override_is_copied_without_it(home):
@@ -82,8 +83,9 @@ def test_a_template_carrying_the_bare_override_is_copied_without_it(home):
     (home / "agents" / "with-switch.json").write_text(
         json.dumps({**BRIAR, "name": "with-switch"}), encoding="utf-8"
     )
+    # Nothing is copied from the template, so the bare override never reaches the file.
     path = write_mate_config("cove", "with-switch")
-    assert set(_servers(path)) == {"notes"}
+    assert _servers(path) == {}
 
 
 def test_a_crewmate_file_holding_the_bare_override_is_repaired_at_start(home):

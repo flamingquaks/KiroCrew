@@ -207,18 +207,19 @@ and you add what its worker needs in its advanced settings.
 
 ### Its worker
 
-A crewmate hands longer work to a **worker**: a session it opens with
-`session_create`, which runs on the crewmate's own memory and workspace with
-the worker's built-in tools plus whatever that crewmate's settings add. To give
-the worker a ready-made set of instructions, connections and skills, open the
-crew editor, choose **Advanced**, pick an agent template under **Worker's extra
-kit**, press **Copy into the worker**, review the list of changes and press
-**Apply**. The kit is copied once; later edits to the template do not reach the
-crewmate. **Re-copy from template** brings a newer version in the same way,
-showing what would change first, and asks whether to keep anything added since
-the last copy. Nothing the kit carries can lift the worker past your security
-policy and profile. **Advanced** appears for a crewmate that owns its own
-config.
+A mate hands longer work to a **worker**: a session it opens with
+`session_create`, which runs on the mate's own memory and workspace with
+the worker's built-in tools plus whatever that mate's settings add. To see
+what it can do, open the crew editor and choose **Abilities**. **Comes with**
+lists what every worker has; you cannot change it. **Added to** lists what was
+added to this mate, and **Remove** takes one out. A new mate starts with
+nothing added. To add more, pick an agent under **Add abilities** on the same
+page: it shows at once which connections, skills and auto-approvals would be
+added and which the mate already has, then **Add** writes them. Only what is
+missing is added, nothing already there is replaced, and the agent's
+instructions are never copied. Later edits to that agent do not reach the
+mate. Nothing added can lift the worker past your security policy and
+profile. **Add abilities** appears for a mate that owns its own config.
 
 ### Goals
 

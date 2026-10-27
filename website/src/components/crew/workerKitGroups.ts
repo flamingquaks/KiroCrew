@@ -8,11 +8,10 @@ import { compareText } from '../../i18n/format'
 import type { WorkerKitChange } from '../../api/crewCapabilities'
 import { changeLabel } from './workerKitLabels'
 
-export type WorkerKitGroupKey = 'prompt' | 'connections' | 'tools' | 'skills' | 'approvals' | 'off'
+export type WorkerKitGroupKey = 'connections' | 'tools' | 'skills' | 'approvals' | 'off'
 
 /** The groups in display order, each with the sections it holds. */
 const GROUPS: { key: WorkerKitGroupKey; sections: WorkerKitChange['section'][]; heading: () => string }[] = [
-  { key: 'prompt', sections: ['prompt'], heading: () => i18nT('crewWorkerKit.section_prompt') },
   { key: 'connections', sections: ['mcpServers'], heading: () => i18nT('crewWorkerKit.group_connections') },
   { key: 'tools', sections: ['tools'], heading: () => i18nT('crewWorkerKit.group_tool_access') },
   { key: 'skills', sections: ['resources', 'skills'], heading: () => i18nT('crewWorkerKit.group_skills') },
@@ -20,7 +19,7 @@ const GROUPS: { key: WorkerKitGroupKey; sections: WorkerKitChange['section'][]; 
   { key: 'off', sections: ['excludedTools', 'disabledTools', 'disabledServers'], heading: () => i18nT('crewWorkerKit.section_excluded') },
 ]
 
-const CHANGE_ORDER: Record<WorkerKitChange['change'], number> = { added: 0, changed: 1, removed: 2 }
+const CHANGE_ORDER: Record<WorkerKitChange['change'], number> = { added: 0, skipped: 1 }
 
 export interface WorkerKitGroup {
   key: WorkerKitGroupKey

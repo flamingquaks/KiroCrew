@@ -1,7 +1,8 @@
 /**
- * WorkerKitPane — the Advanced pane's worker kit: pick one template, see what
- * copying it would change, confirm, and only then write. A re-copy asks whether
- * to keep what was added since the last copy.
+ * WorkerKitPane — the "Add abilities" flow: pick an agent, see what adding its
+ * tools / MCP servers / skills would do (net-new added, already-present
+ * skipped), confirm, and only then write. Purely additive; prompt is never
+ * copied.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
@@ -34,9 +35,10 @@ const PREVIEW = {
   member: 'pixel',
   template: 'release-bot',
   revision: 'rev-1',
+  runs_unasked: false,
   changes: [
-    { section: 'prompt', id: 'prompt', change: 'changed' },
     { section: 'mcpServers', id: 'jira', change: 'added' },
+    { section: 'skills', id: 'notes', change: 'added' },
   ],
 }
 
@@ -49,36 +51,99 @@ function renderPane() {
   )
 }
 
+/** Pick an agent and wait for the auto-preview. */
+async function previewAdd(template = 'release-bot') {
+  await screen.findByRole('option', { name: template })
+  fireEvent.click(screen.getByRole('option', { name: template }))
+  return screen.findByTestId('worker-kit-changes')
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
-  mockKit.get.mockResolvedValue({ member: 'pixel', template: '', revision: 'r0', has_additions_since: false })
+  mockKit.get.mockResolvedValue({ member: 'pixel', revision: 'r0' })
   mockKit.preview.mockResolvedValue(PREVIEW)
-  mockKit.apply.mockResolvedValue({ member: 'pixel', template: 'release-bot', revision: 'r2', has_additions_since: false })
+  mockKit.apply.mockResolvedValue({ member: 'pixel', revision: 'r2' })
 })
 
 describe('WorkerKitPane', () => {
-  it('names the crewmate by its display name and says nothing is copied yet', async () => {
+  it('names the crewmate by its display name', async () => {
     renderPane()
-    expect(await screen.findByTestId('worker-kit-current')).toHaveTextContent('No template copied yet')
-    expect(screen.getByText(/Pixel hands work to a worker/)).toBeInTheDocument()
-    expect(screen.queryByText(/pixel hands/)).toBeNull()
+    expect(await screen.findByText(/Copy the tools, MCP servers and skills from another agent into Pixel/)).toBeInTheDocument()
+    expect(screen.queryByText(/into pixel\./)).toBeNull()
   })
 
-  it('previews first and writes only on Apply, with the preview revision', async () => {
+  it('previews first and writes only on Add, with the preview revision and no keep flag', async () => {
     renderPane()
-    await screen.findByTestId('worker-kit-current')
-    fireEvent.click(screen.getByRole('option', { name: 'release-bot' }))
-    fireEvent.click(screen.getByTestId('worker-kit-preview'))
-    const changes = await screen.findByTestId('worker-kit-changes')
-    expect(changes).toHaveTextContent('Copying release-bot would make these changes')
-    expect(changes).toHaveTextContent('Added')
+    const changes = await previewAdd()
+    expect(changes).toHaveTextContent('Adds 2 from release-bot')
     expect(changes).toHaveTextContent('jira')
-    expect(mockKit.preview).toHaveBeenCalledWith('pixel', { template: 'release-bot', keep_additions: true })
+    expect(mockKit.preview).toHaveBeenCalledWith('pixel', { template: 'release-bot' })
     expect(mockKit.apply).not.toHaveBeenCalled()
     fireEvent.click(screen.getByTestId('worker-kit-apply'))
     await waitFor(() => expect(mockKit.apply).toHaveBeenCalledWith('pixel', {
-      template: 'release-bot', keep_additions: true, revision: 'rev-1',
+      template: 'release-bot', revision: 'rev-1',
     }))
+  })
+
+  it('shows an already-present item as skipped, not added', async () => {
+    mockKit.preview.mockResolvedValue({
+      ...PREVIEW,
+      changes: [
+        { section: 'mcpServers', id: 'notes', change: 'added' },
+        { section: 'mcpServers', id: 'jira', change: 'skipped' },
+      ],
+    })
+    renderPane()
+    const changes = await previewAdd()
+    const badges = within(changes).getAllByTestId('worker-kit-change-badge')
+    expect(badges.map(b => b.textContent)).toEqual(['Add', 'Already has'])
+    expect(badges[0]).toHaveClass('bg-ok-subtle')
+  })
+
+  it('disables Add and says nothing is new when every item is already present', async () => {
+    mockKit.preview.mockResolvedValue({
+      ...PREVIEW,
+      changes: [{ section: 'mcpServers', id: 'jira', change: 'skipped' }],
+    })
+    renderPane()
+    const changes = await previewAdd()
+    expect(changes).toHaveTextContent('release-bot adds nothing new')
+    expect(screen.getByTestId('worker-kit-apply')).toBeDisabled()
+    expect(mockKit.apply).not.toHaveBeenCalled()
+  })
+
+  it('says which tools will run unasked when the add carries an auto-approval', async () => {
+    mockKit.preview.mockResolvedValue({
+      ...PREVIEW,
+      changes: [
+        { section: 'mcpServers', id: 'jira', change: 'added' },
+        { section: 'allowedTools', id: '@jira/search', change: 'added' },
+      ],
+    })
+    renderPane()
+    await previewAdd()
+    expect(screen.getByTestId('worker-kit-approvals-hint')).toHaveTextContent('will run without asking')
+  })
+
+  it('shows the granted hint when a restored tool already has approval', async () => {
+    mockKit.preview.mockResolvedValue({
+      ...PREVIEW,
+      runs_unasked: true,
+      changes: [{ section: 'tools', id: '@notes/write', change: 'added' }],
+    })
+    renderPane()
+    await previewAdd()
+    expect(screen.getByTestId('worker-kit-approvals-hint')).toHaveTextContent('will run without asking')
+  })
+
+  it('keeps the ask-first hint when the add carries no auto-approval', async () => {
+    mockKit.preview.mockResolvedValue({
+      ...PREVIEW,
+      changes: [{ section: 'mcpServers', id: 'notes', change: 'added' }],
+    })
+    renderPane()
+    await previewAdd()
+    expect(screen.getByTestId('worker-kit-approvals-hint')).toHaveTextContent('ask before running')
   })
 
   it('names a skill and an approval in the preview, keeping the stored value in the title', async () => {
@@ -86,15 +151,12 @@ describe('WorkerKitPane', () => {
     mockKit.preview.mockResolvedValue({
       ...PREVIEW,
       changes: [
-        { section: 'resources', id: uri, change: 'removed' },
-        { section: 'allowedTools', id: '@notes/save_note', change: 'removed' },
+        { section: 'resources', id: uri, change: 'added' },
+        { section: 'allowedTools', id: '@notes/save_note', change: 'added' },
       ],
     })
     renderPane()
-    await screen.findByTestId('worker-kit-current')
-    fireEvent.click(screen.getByRole('option', { name: 'release-bot' }))
-    fireEvent.click(screen.getByTestId('worker-kit-preview'))
-    const changes = await screen.findByTestId('worker-kit-changes')
+    const changes = await previewAdd()
     const names = within(changes).getAllByTestId('worker-kit-change-name')
     expect(names.map(n => n.textContent)).toEqual(['release-notes', 'save_note on notes'])
     expect(names[0]).toHaveAttribute('title', uri)
@@ -103,68 +165,10 @@ describe('WorkerKitPane', () => {
 
   it('cancelling the preview writes nothing', async () => {
     renderPane()
-    await screen.findByTestId('worker-kit-current')
-    fireEvent.click(screen.getByRole('option', { name: 'release-bot' }))
-    fireEvent.click(screen.getByTestId('worker-kit-preview'))
-    await screen.findByTestId('worker-kit-changes')
+    await previewAdd()
     fireEvent.click(screen.getByTestId('worker-kit-cancel'))
     expect(screen.queryByTestId('worker-kit-changes')).toBeNull()
     expect(mockKit.apply).not.toHaveBeenCalled()
-  })
-
-  it('offers a re-copy of the copied template and asks whether to keep additions', async () => {
-    mockKit.get.mockResolvedValue({ member: 'pixel', template: 'release-bot', revision: 'r1', has_additions_since: true })
-    renderPane()
-    expect(await screen.findByTestId('worker-kit-current')).toHaveTextContent('Copied from release-bot')
-    expect(screen.getByTestId('worker-kit-preview')).toHaveTextContent('Re-copy from template')
-    const keep = screen.getByTestId('worker-kit-keep')
-    expect(keep).toBeChecked()
-    fireEvent.click(keep)
-    fireEvent.click(screen.getByTestId('worker-kit-preview'))
-    await screen.findByTestId('worker-kit-changes')
-    expect(mockKit.preview).toHaveBeenCalledWith('pixel', { template: 'release-bot', keep_additions: false })
-    fireEvent.click(screen.getByTestId('worker-kit-apply'))
-    await waitFor(() => expect(mockKit.apply).toHaveBeenCalledWith('pixel', {
-      template: 'release-bot', keep_additions: false, revision: 'rev-1',
-    }))
-  })
-
-  it('names a limit the copy sets on a server the worker already has', async () => {
-    mockKit.preview.mockResolvedValue({
-      ...PREVIEW,
-      changes: [
-        { section: 'disabledServers', id: 'kirocrew-core', change: 'added' },
-        { section: 'disabledTools', id: '@kirocrew-core/cron_add', change: 'added' },
-      ],
-    })
-    renderPane()
-    await screen.findByTestId('worker-kit-current')
-    fireEvent.click(screen.getByRole('option', { name: 'release-bot' }))
-    fireEvent.click(screen.getByTestId('worker-kit-preview'))
-    const group = await screen.findByTestId('worker-kit-group-off')
-    expect(within(group).getByTestId('panel-section-header')).toHaveTextContent('Turned off2')
-    expect(within(group).getAllByTestId('worker-kit-change-name').map(n => n.textContent)).toEqual([
-      'cron_add on kirocrew-core',
-      'kirocrew-core',
-    ])
-    // A restriction's badge states its effect, never a green "Added".
-    const badges = within(group).getAllByTestId('worker-kit-change-badge')
-    expect(badges.map(b => b.textContent)).toEqual(['Turns off', 'Turns off'])
-    expect(badges[0]).toHaveClass('bg-danger-subtle')
-  })
-
-  it('says a lifted restriction turns the tool back on', async () => {
-    mockKit.preview.mockResolvedValue({
-      ...PREVIEW,
-      changes: [{ section: 'disabledTools', id: '@kirocrew-core/cron_add', change: 'removed' }],
-    })
-    renderPane()
-    await screen.findByTestId('worker-kit-current')
-    fireEvent.click(screen.getByRole('option', { name: 'release-bot' }))
-    fireEvent.click(screen.getByTestId('worker-kit-preview'))
-    const badge = within(await screen.findByTestId('worker-kit-group-off')).getByTestId('worker-kit-change-badge')
-    expect(badge).toHaveTextContent('Turns back on')
-    expect(badge).toHaveClass('bg-ok-subtle')
   })
 
   it('groups the preview by kind, each change word a coloured badge that keeps its word', async () => {
@@ -172,88 +176,95 @@ describe('WorkerKitPane', () => {
       ...PREVIEW,
       changes: [
         { section: 'allowedTools', id: '@jira/search', change: 'added' },
-        { section: 'mcpServers', id: 'slack', change: 'removed' },
-        { section: 'prompt', id: 'prompt', change: 'changed' },
+        { section: 'mcpServers', id: 'slack', change: 'skipped' },
         { section: 'mcpServers', id: 'jira', change: 'added' },
-        { section: 'mcpServers', id: 'builder', change: 'changed' },
+        { section: 'skills', id: 'notes', change: 'added' },
       ],
     })
     renderPane()
-    await screen.findByTestId('worker-kit-current')
-    fireEvent.click(screen.getByRole('option', { name: 'release-bot' }))
-    fireEvent.click(screen.getByTestId('worker-kit-preview'))
-    const changes = await screen.findByTestId('worker-kit-changes')
+    const changes = await previewAdd()
     const headers = within(changes).getAllByTestId('panel-section-header').map(h => h.textContent)
-    expect(headers).toEqual(['Instructions1', 'Connections3', 'Auto-approvals1'])
+    expect(headers).toEqual(['Connections2', 'Skills1', 'Auto-approvals1'])
     const connections = within(changes).getByTestId('worker-kit-group-connections')
-    // Added, then changed, then removed.
-    expect(within(connections).getAllByTestId('worker-kit-change-name').map(n => n.textContent)).toEqual(['jira', 'builder', 'slack'])
+    // Added before skipped.
+    expect(within(connections).getAllByTestId('worker-kit-change-name').map(n => n.textContent)).toEqual(['jira', 'slack'])
     const badges = within(connections).getAllByTestId('worker-kit-change-badge')
-    expect(badges.map(b => b.textContent)).toEqual(['Added', 'Changed', 'Removed'])
-    // Tinted by hue; the word itself in the text colour, the hue on the glyph.
+    expect(badges.map(b => b.textContent)).toEqual(['Add', 'Already has'])
     expect(badges[0]).toHaveClass('bg-ok-subtle', 'text-text')
-    expect(badges[1]).toHaveClass('bg-warn-subtle', 'text-text')
-    expect(badges[2]).toHaveClass('bg-danger-subtle', 'text-text')
-    expect(badges[0].querySelector('svg')).toHaveClass('text-ok-text')
-    expect(badges[2].querySelector('svg')).toHaveClass('text-danger-text')
   })
 
   it.each([
-    ['stale_revision', 'changed after the preview. Press “Copy into the worker” again to see the new changes.'],
-    ['template_restrictions_uncarried', "hooks the worker can't keep. Choose another template."],
-    ['template_unreadable', "That template can't be read."],
+    ['stale_revision', 'changed after the preview. The changes below are up to date'],
+    ['template_restrictions_uncarried', "hooks the worker can't keep. Choose another one."],
+    ['template_unreadable', "That agent can't be read."],
   ])('says what a %s refusal means, never the code', async (code, text) => {
     mockKit.apply.mockRejectedValue(new ApiError(409, code, JSON.stringify({ error: code, code })))
     renderPane()
-    await screen.findByTestId('worker-kit-current')
-    fireEvent.click(screen.getByRole('option', { name: 'release-bot' }))
-    fireEvent.click(screen.getByTestId('worker-kit-preview'))
-    await screen.findByTestId('worker-kit-changes')
+    await previewAdd()
     fireEvent.click(screen.getByTestId('worker-kit-apply'))
     const notice = await screen.findByTestId('worker-kit-error')
     expect(notice).toHaveTextContent(text)
     expect(notice).not.toHaveTextContent(code)
   })
 
-  it('names the re-copy button when that is the button the pane shows', async () => {
-    mockKit.get.mockResolvedValue({ member: 'pixel', template: 'release-bot', revision: 'r1', has_additions_since: false })
-    mockKit.apply.mockRejectedValue(new ApiError(409, 'stale_revision', '{"error":"stale_revision","code":"stale_revision"}'))
+  it('replaces a stale preview with a fresh one for the same agent, which then applies', async () => {
+    mockKit.apply.mockRejectedValueOnce(new ApiError(409, 'stale_revision', '{"error":"stale_revision","code":"stale_revision"}'))
     renderPane()
-    await screen.findByTestId('worker-kit-current')
-    fireEvent.click(screen.getByTestId('worker-kit-preview'))
-    await screen.findByTestId('worker-kit-changes')
+    await previewAdd()
+    mockKit.preview.mockResolvedValue({ ...PREVIEW, revision: 'rev-2' })
     fireEvent.click(screen.getByTestId('worker-kit-apply'))
-    const notice = await screen.findByTestId('worker-kit-error')
-    expect(notice).toHaveTextContent('Press “Re-copy from template” again')
-    // The button the sentence names is the one on screen.
-    expect(screen.getByTestId('worker-kit-preview')).toHaveTextContent('Re-copy from template')
+    await waitFor(() => expect(mockKit.preview).toHaveBeenCalledTimes(2))
+    expect(mockKit.preview).toHaveBeenLastCalledWith('pixel', { template: 'release-bot' })
+    await screen.findByTestId('worker-kit-changes')
+    // The stale-revision notice comes from the rejected apply mutation.
+    expect(await screen.findByTestId('worker-kit-error', {}, { timeout: 2000 })).toHaveTextContent('The changes below are up to date')
+    fireEvent.click(screen.getByTestId('worker-kit-apply'))
+    await waitFor(() => expect(mockKit.apply).toHaveBeenLastCalledWith('pixel', {
+      template: 'release-bot', revision: 'rev-2',
+    }))
   })
 
-  it('drops a stale preview so the next step is a fresh one', async () => {
-    mockKit.apply.mockRejectedValue(new ApiError(409, 'stale_revision', '{"error":"stale_revision","code":"stale_revision"}'))
+  it('offers Try again after a failed preview, which re-previews the same agent', async () => {
+    mockKit.preview.mockRejectedValueOnce(new Error('network down'))
     renderPane()
-    await screen.findByTestId('worker-kit-current')
+    await screen.findByRole('option', { name: 'release-bot' })
     fireEvent.click(screen.getByRole('option', { name: 'release-bot' }))
-    fireEvent.click(screen.getByTestId('worker-kit-preview'))
+    expect(await screen.findByTestId('worker-kit-error')).toHaveTextContent('network down')
+    fireEvent.click(screen.getByTestId('worker-kit-retry'))
     await screen.findByTestId('worker-kit-changes')
+    expect(mockKit.preview).toHaveBeenCalledTimes(2)
+    expect(mockKit.preview).toHaveBeenLastCalledWith('pixel', { template: 'release-bot' })
+    expect(screen.queryByTestId('worker-kit-retry')).toBeNull()
+  })
+
+  it('Cancel after a failed preview clears the pick and the error, writing nothing', async () => {
+    mockKit.preview.mockRejectedValueOnce(new Error('network down'))
+    renderPane()
+    await screen.findByRole('option', { name: 'release-bot' })
+    fireEvent.click(screen.getByRole('option', { name: 'release-bot' }))
+    await screen.findByTestId('worker-kit-retry')
+    fireEvent.click(screen.getByTestId('worker-kit-retry-cancel'))
+    expect(screen.queryByTestId('worker-kit-retry')).toBeNull()
+    expect(screen.getByRole('combobox')).toHaveTextContent('')
+    expect(screen.queryByTestId('worker-kit-error')).toBeNull()
+    expect(mockKit.apply).not.toHaveBeenCalled()
+  })
+
+  it('keeps the preview to retry Add after a refusal that is not about staleness', async () => {
+    mockKit.apply.mockRejectedValueOnce(new Error('network down'))
+    renderPane()
+    await previewAdd()
     fireEvent.click(screen.getByTestId('worker-kit-apply'))
-    await screen.findByTestId('worker-kit-error')
-    expect(screen.queryByTestId('worker-kit-changes')).toBeNull()
-    expect(screen.getByTestId('worker-kit-preview')).toBeEnabled()
+    expect(await screen.findByTestId('worker-kit-error')).toHaveTextContent('network down')
+    expect(screen.getByTestId('worker-kit-apply')).toBeEnabled()
+    expect(mockKit.preview).toHaveBeenCalledTimes(1)
   })
 
   it('keeps a readable message the transport already made', async () => {
     mockKit.preview.mockRejectedValue(new ApiError(403, 'Only the owner can do this.', '{"error":"Only the owner can do this."}'))
     renderPane()
-    await screen.findByTestId('worker-kit-current')
+    await screen.findByRole('option', { name: 'release-bot' })
     fireEvent.click(screen.getByRole('option', { name: 'release-bot' }))
-    fireEvent.click(screen.getByTestId('worker-kit-preview'))
     expect(await screen.findByTestId('worker-kit-error')).toHaveTextContent('Only the owner can do this.')
-  })
-
-  it('does not ask about additions when there are none', async () => {
-    renderPane()
-    await screen.findByTestId('worker-kit-current')
-    expect(screen.queryByTestId('worker-kit-keep')).toBeNull()
   })
 })

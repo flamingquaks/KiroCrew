@@ -10,6 +10,20 @@ from __future__ import annotations
 
 from kiro_crew import mate_capabilities, mate_worker
 
+
+def _patch_base(monkeypatch, base):
+    """Make the worker SOURCE BASE (``MATE_WORKER_AGENT``) resolve to *base*.
+
+    ``worker_summary`` loads the base via ``agent_specs.load_agent_spec(dir, id)``;
+    patch that so the base-diff has a known baseline without touching disk."""
+    from kiro_crew.agent_sdk import agent_specs
+
+    def fake_load(_dir, agent_id, *a, **k):
+        return dict(base)
+
+    monkeypatch.setattr(agent_specs, "load_agent_spec", fake_load)
+
+
 WORKER = {
     "tools": ["fs_read", "@platform", "@notes"],
     "allowedTools": ["@notes/read"],
@@ -68,3 +82,191 @@ def test_an_unreadable_worker_spec_gives_no_summary(monkeypatch):
 
     monkeypatch.setattr(mate_worker, "member_worker_spec", boom)
     assert mate_capabilities.worker_summary("ben", {}) is None
+
+
+def test_only_rows_beyond_the_worker_base_read_local(monkeypatch):
+    """A row the crewmate's file carries BEYOND the worker SOURCE BASE is ``local``
+    (removable, "Added to mate"); a row the base already provides is ``inherited``
+    (read-only, "Comes with"). A newly-created mate is a near-copy of the base, so
+    its baseline reads "comes with" and only owner-added abilities read "added" —
+    the file-membership rule marked the whole baseline removable, the reported bug."""
+    base = {
+        "name": "kirocrew-mate-worker",
+        "mcpServers": {"platform": {"command": "plat"}},
+        "tools": ["@platform", "fs_read"],
+        "allowedTools": [],
+        "skills": [],
+        "resources": [],
+    }
+    # The file is the base PLUS ``notes`` (the owner's one addition).
+    file_spec = {
+        "name": "ben",
+        "mcpServers": {"platform": {"command": "plat"}, "notes": {"command": "notes"}},
+        "tools": ["@platform", "fs_read", "@notes"],
+        "allowedTools": ["@notes/read"],
+        "skills": ["catalog-skill"],
+        "resources": [],
+    }
+    merged = {
+        "mcpServers": {"platform": {"command": "plat"}, "notes": {"command": "notes"}},
+        "tools": ["@platform", "fs_read", "@notes"],
+        "allowedTools": ["@notes/read"],
+        "skills": ["catalog-skill"],
+        "resources": [],
+    }
+    monkeypatch.setattr(mate_worker, "member_worker_spec", lambda member: merged)
+    monkeypatch.setattr(mate_capabilities, "_load_spec", lambda member: (None, file_spec))
+    _patch_base(monkeypatch, base)
+
+    rows = mate_capabilities.worker_summary("ben", CATALOG)["rows"]
+    state = {(r["section"], r["id"]): r["state"] for r in rows}
+    # Beyond the base -> local (removable).
+    assert state[("mcpServers", "notes")] == "local"
+    assert state[("tools", "@notes")] == "local"
+    assert state[("allowedTools", "@notes/read")] == "local"
+    assert state[("skills", "catalog-skill")] == "local"
+    # In the base -> inherited (read-only), even though the file also lists them.
+    assert state[("mcpServers", "platform")] == "inherited"
+    assert state[("tools", "@platform")] == "inherited"
+    assert state[("tools", "fs_read")] == "inherited"
+
+
+def test_a_new_mate_that_only_copies_the_base_has_an_empty_added_band(monkeypatch):
+    """A freshly-created mate whose file equals the worker base adds nothing: every
+    row reads ``inherited`` and the "Added to mate" band is empty. This is the live
+    ``retwerf`` case — its baseline must NOT show as removable."""
+    base = {
+        "name": "kirocrew-mate-worker",
+        "mcpServers": {"kirocrew-core": {"command": "c"}},
+        "tools": ["fs_read", "@kirocrew-core"],
+        "allowedTools": [],
+        "skills": [],
+        "resources": [],
+    }
+    file_spec = {**base, "name": "retwerf"}
+    merged = {
+        "mcpServers": {"kirocrew-core": {"command": "c"}},
+        "tools": ["fs_read", "@kirocrew-core"],
+    }
+    monkeypatch.setattr(mate_worker, "member_worker_spec", lambda member: merged)
+    monkeypatch.setattr(mate_capabilities, "_load_spec", lambda member: (None, file_spec))
+    _patch_base(monkeypatch, base)
+    rows = mate_capabilities.worker_summary("retwerf", {})["rows"]
+    assert {r["state"] for r in rows} == {"inherited"}
+
+
+def test_an_unreadable_file_leaves_rows_inherited(monkeypatch):
+    """If the crewmate file cannot be read, the summary degrades to all-inherited
+    rather than failing — it is display only."""
+
+    def boom(member):
+        raise OSError("unreadable")
+
+    monkeypatch.setattr(mate_worker, "member_worker_spec", lambda member: WORKER)
+    monkeypatch.setattr(mate_capabilities, "_load_spec", boom)
+    rows = mate_capabilities.worker_summary("ben", CATALOG)["rows"]
+    assert {r["state"] for r in rows} == {"inherited"}
+
+
+def test_each_added_row_removes_the_stored_row_it_names(monkeypatch):
+    """A Remove must drop a row the file really stores (``agent_capabilities._rows``).
+
+    A stored server or tool removes itself; a catalog skill is stored under
+    ``skills`` by its key; a skill URI off the catalog is stored under
+    ``resources``; a ``@server`` selector derived from a stored ``*`` and an entry
+    of the spec's own ``skills`` list name no stored row, so they offer no Remove
+    (the live miss: the remove popped a key that did not exist and saved).
+    """
+    base = {"name": "kirocrew-mate-worker", "mcpServers": {}, "tools": [], "resources": []}
+    file_spec = {
+        "name": "ben",
+        "mcpServers": {"notes": {"command": "notes"}, "jira": {"command": "jira"}},
+        "tools": ["*", "@notes"],
+        "allowedTools": [],
+        "resources": [
+            "file:///home/x/catalog/triage/SKILL.md",
+            "skill:///home/x/skills/release-notes/SKILL.md",
+        ],
+        "skills": ["listed-skill"],
+    }
+    merged = {
+        "mcpServers": {"notes": {"command": "notes"}, "jira": {"command": "jira"}},
+        "tools": ["@notes", "@jira"],
+        "resources": file_spec["resources"],
+        "skills": ["listed-skill"],
+    }
+    monkeypatch.setattr(mate_worker, "member_worker_spec", lambda member: merged)
+    monkeypatch.setattr(mate_capabilities, "_load_spec", lambda member: (None, file_spec))
+    _patch_base(monkeypatch, base)
+
+    rows = mate_capabilities.worker_summary("ben", CATALOG)["rows"]
+    remove = {(r["section"], r["id"]): r["remove"] for r in rows if r["state"] == "local"}
+    assert remove[("mcpServers", "jira")] == {"section": "mcpServers", "id": "jira"}
+    assert remove[("tools", "@notes")] is None
+    assert remove[("skills", "triage")] == {"section": "skills", "id": "triage"}
+    release = "skill:///home/x/skills/release-notes/SKILL.md"
+    assert remove[("skills", release)] == {"section": "resources", "id": release}
+    # Derived from the stored "*": nothing of its own to remove.
+    assert remove[("tools", "@jira")] is None
+    # The spec's own skills list has no editor row.
+    assert remove[("skills", "listed-skill")] is None
+
+
+def test_stored_wildcard_prevents_removing_any_tool_row(monkeypatch):
+    base = {"mcpServers": {"platform": {"command": "plat"}}, "tools": ["@platform"]}
+    file_spec = {
+        "mcpServers": {"notes": {"command": "notes"}, "jira": {"command": "jira"}},
+        "tools": ["*", "@notes"],
+    }
+    merged = mate_worker.merge_worker_spec(base, mate_worker.worker_additions(base, file_spec))
+    monkeypatch.setattr(mate_worker, "member_worker_spec", lambda member: merged)
+    monkeypatch.setattr(mate_capabilities, "_load_spec", lambda member: (None, file_spec))
+    _patch_base(monkeypatch, base)
+
+    rows = mate_capabilities.worker_summary("ben", {})["rows"]
+    tools = {row["id"]: row for row in rows if row["section"] == "tools"}
+    assert set(tools) == {"@platform", "@notes", "@jira"}
+    assert tools["@notes"]["state"] == tools["@jira"]["state"] == "local"
+    # The base's own tool stays in "Comes with" even though the stored ``*`` covers it.
+    assert tools["@platform"]["state"] == "inherited"
+    assert all(row["remove"] is None for row in tools.values())
+    assert next(row for row in rows if row["section"] == "mcpServers" and row["id"] == "notes")[
+        "remove"
+    ] == {"section": "mcpServers", "id": "notes"}
+
+
+def test_stored_whole_server_prevents_removing_its_single_tool_row(monkeypatch):
+    base = {"mcpServers": {}, "tools": []}
+    file_spec = {
+        "mcpServers": {"notes": {"command": "notes"}},
+        "tools": ["@notes", "@notes/read"],
+    }
+    merged = mate_worker.merge_worker_spec(base, mate_worker.worker_additions(base, file_spec))
+    monkeypatch.setattr(mate_worker, "member_worker_spec", lambda member: merged)
+    monkeypatch.setattr(mate_capabilities, "_load_spec", lambda member: (None, file_spec))
+    _patch_base(monkeypatch, base)
+
+    rows = mate_capabilities.worker_summary("ben", {})["rows"]
+    tools = {row["id"]: row for row in rows if row["section"] == "tools"}
+    assert tools["@notes/read"]["state"] == "local"
+    assert tools["@notes/read"]["remove"] is None
+    assert tools["@notes"]["remove"] == {"section": "tools", "id": "@notes"}
+
+
+def test_skill_resource_glob_keeps_an_explicit_skill_available(monkeypatch):
+    glob = "skill://.kiro/skills/*/SKILL.md"
+    release = "skill://.kiro/skills/release/SKILL.md"
+    base = {"mcpServers": {}, "tools": [], "resources": []}
+    file_spec = {"resources": [glob, release]}
+    merged = mate_worker.merge_worker_spec(base, mate_worker.worker_additions(base, file_spec))
+    monkeypatch.setattr(mate_worker, "member_worker_spec", lambda member: merged)
+    monkeypatch.setattr(mate_capabilities, "_load_spec", lambda member: (None, file_spec))
+    _patch_base(monkeypatch, base)
+
+    for catalog, key in (({}, release), ({"release": release}, "release")):
+        rows = mate_capabilities.worker_summary("ben", catalog)["rows"]
+        skills = {row["id"]: row for row in rows if row["section"] == "skills"}
+        assert skills[key]["state"] == "local"
+        assert skills[key]["remove"] is None
+        assert skills[glob]["remove"] == {"section": "resources", "id": glob}
+        assert file_spec == {"resources": [glob, release]}

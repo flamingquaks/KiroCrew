@@ -125,21 +125,92 @@ def _resolved_source_spec(source_agent: str) -> dict[str, Any]:
 
 
 def write_mate_config(mate_id: str, source_agent: str) -> Path:
-    """Eagerly copy *source_agent*'s config into the crewmate file for *mate_id*.
+    """Write *mate_id*'s crewmate file as the RFC §5.4 minimal file: identity, the
+    template's RESTRICTIONS, and empty additions.
 
-    The source spec verbatim, no field allow-list, except a literal ``prompt`` and
-    ``name`` set to *mate_id* (declared-name-wins). Atomic at ``0o600``; an
-    existing crewmate file is replaced.
+    The worker base (``kirocrew-mate-worker``) and the chat conductor
+    (``kirocrew-mate-conductor``) are source-defined, so a new mate gets its
+    baseline capabilities from them at projection time, and the file holds only
+    what the owner later adds. *source_agent*'s servers, tools and skills are not
+    copied: a verbatim copy carried the machine's own ``~/.kiro/settings/mcp.json``
+    servers into every new mate, where they then read as "added". Its limits ARE
+    carried, because the worker merge applies only the limits the file states: an
+    ``excludedTools`` entry, a tool a server entry turns off, and a base server it
+    switches off -- read through :func:`mate_config_migration.migration_file`, the
+    rule the upgrade migration keeps limits by. Atomic at ``0o600``; an existing
+    crewmate file is replaced.
     """
-    spec = _resolved_source_spec(source_agent)
-    # The file declares the id it is resolved under. load_agent_spec prefers a
-    # spec whose declared name matches the id, so a copied ``name`` that still
-    # read as the SOURCE would make the crewmate file resolve under the source's
-    # name, not the crewmate's -- set it to the crewmate id.
-    spec["name"] = mate_id
+    source = _resolved_source_spec(source_agent)
+    spec: dict[str, Any] = {
+        # Identity: the file declares the id it resolves under (declared-name-wins),
+        # so the crewmate file resolves under the crewmate, not the source.
+        "name": mate_id,
+        "prompt": "",
+        "mcpServers": {},
+        "tools": [],
+        "allowedTools": [],
+        "skills": [],
+        "resources": [],
+    }
+    spec.update(_carried_restrictions(mate_id, source))
     path = write_mate_spec(mate_id, spec)
-    logger.info("wrote crewmate config %s copied from source agent %r", path, source_agent)
+    logger.info("wrote minimal crewmate config %s (limits of %r carried)", path, source_agent)
     return path
+
+
+def _carried_restrictions(mate_id: str, source: dict[str, Any]) -> dict[str, Any]:
+    """*source*'s limits in crewmate-file shape: ``excludedTools`` and base-server switch-offs.
+
+    Read from :func:`mate_config_migration.migration_file`, keeping only its
+    restriction keys: ``excludedTools`` and each ``{"disabled": true}`` entry for a
+    base server. Every per-server ``disabledTools`` the source names also joins
+    ``excludedTools``, base server or not: the file does not copy a server entry
+    verbatim, so a limit left inside one would be lost. With the worker base
+    unreadable, every exclusion and per-server tool limit is still kept as
+    ``excludedTools``, and every server it
+    switches off is kept as ``{"disabled": true}``: the base is generated at boot,
+    so a switch-off dropped now would launch that server once the base is back. A
+    switch-off naming no base server launches nothing. A failure here fails the
+    create rather than writing a file without the template's limits.
+    """
+    from kiro_crew.mate_config_migration import _worker_base, migration_file
+    from kiro_crew.mate_worker import disabled_tool_refs
+    from kiro_crew.mcp_cleanup import mcp_entry_is_muted
+
+    tool_limits = disabled_tool_refs(source.get("mcpServers"))
+    try:
+        base = _worker_base()
+    except Exception:  # noqa: BLE001 - an unreadable base keeps every named limit
+        logger.warning("worker base unreadable; carrying every limit the template names")
+        raw = source.get("excludedTools")
+        excluded = [t for t in raw if isinstance(t, str)] if isinstance(raw, list) else []
+        excluded += tool_limits
+        out_fallback: dict[str, Any] = {}
+        if excluded:
+            out_fallback["excludedTools"] = list(dict.fromkeys(excluded))
+        servers = source.get("mcpServers")
+        muted = {
+            name: {"disabled": True}
+            for name, entry in (servers if isinstance(servers, dict) else {}).items()
+            if isinstance(name, str) and isinstance(entry, dict) and mcp_entry_is_muted(entry)
+        }
+        if muted:
+            out_fallback["mcpServers"] = muted
+        return out_fallback
+    full = migration_file(mate_id, base, source)
+    out: dict[str, Any] = {}
+    kept = [t for t in (full.get("excludedTools") or []) if isinstance(t, str)]
+    excluded_all = list(dict.fromkeys([*kept, *tool_limits]))
+    if excluded_all:
+        out["excludedTools"] = excluded_all
+    switched_off = {
+        name: entry
+        for name, entry in (full.get("mcpServers") or {}).items()
+        if entry == {"disabled": True}
+    }
+    if switched_off:
+        out["mcpServers"] = switched_off
+    return out
 
 
 #: Which instance wrote each crewmate file: ``{"<mate id>": "<data home>"}``.
@@ -236,9 +307,7 @@ def adopt_own_file(name: str) -> str:
     The eager copy (RFC §5.4). Returns ``copied``, ``no_binding``, ``no_source``
     or ``already_owned``; raises :class:`MateConfigError` when it cannot write.
     """
-    from kiro_crew.agent_files import is_kirocrew_default_agent
     from kiro_crew.config.loader import KiroCrewConfig, _invalidate_config_cache
-    from kiro_crew.mate_worker_kit import record_initial_kit
     from kiro_crew.memory_stores import persist_member_config
 
     _invalidate_config_cache()
@@ -270,11 +339,6 @@ def adopt_own_file(name: str) -> str:
         )
     prior_store = binding.memory_store
     write_mate_config(name, source)
-    # A template other than the default is the worker's extra kit: record the
-    # copy, so a later "Re-copy from template" can tell the kit from what was
-    # added since. Best-effort; the file is already written.
-    if not is_kirocrew_default_agent(source):
-        record_initial_kit(name, source)
     binding.kiro_agent = name
     persist_member_config(cfg, name, expected_store=prior_store, changed_fields={"kiro_agent"})
     return "copied"
