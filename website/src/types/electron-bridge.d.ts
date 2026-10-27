@@ -82,6 +82,14 @@ declare global {
     set: (enabled: boolean) => Promise<boolean>
   }
 
+  /** First-run setup's "only using crews on other machines" exit. `start`
+   *  opens the desktop app's remote-crew form; on "switching" the window is
+   *  about to leave this page for the crew's dashboard. */
+  interface RemoteCrewSetupAPI {
+    available: () => Promise<boolean>
+    start: () => Promise<'switching' | 'cancelled' | 'unavailable'>
+  }
+
   interface CrashReportsAPI {
     get: () => Promise<{ newCount: number }>
     reveal: () => Promise<{ ok: boolean; error?: string }>
@@ -290,6 +298,7 @@ declare global {
     kirocrew?: KiroCrewBridge
     electronAPI?: ElectronAPI
     localGatewayAPI?: LocalGatewayAPI
+    remoteCrewSetupAPI?: RemoteCrewSetupAPI
     crashReportsAPI?: CrashReportsAPI
     wslAPI?: WslAPI
     folderPickAPI?: FolderPickAPI
