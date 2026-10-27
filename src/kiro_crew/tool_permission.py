@@ -481,7 +481,12 @@ async def _admitted(ask: Ask, policy: Policy, hit: Hit, low: bool) -> bool:
     refused = await name_grant.refusal_for_event(ask.event)
     if refused is None:
         return True
-    policy.narrator.declined(ask, refused)
+    # The narration is the human-facing log line, so a platform-scope refusal
+    # (one constant text per session) is narrated once per session, as every
+    # other surface does. The audit row below is a security decision and is
+    # written for every call.
+    if name_grant.should_log_decline(ask.session_key, refused):
+        policy.narrator.declined(ask, refused)
     policy.audit.declined(ask, refused, hit.reason)
     return False
 
