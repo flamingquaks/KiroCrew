@@ -435,7 +435,9 @@ def _ceiling_permitted(allowed_tools: Any, agent_id: str) -> list[str]:
     runs over ``mcpServers`` — the last chance to withhold, taken deliberately.
 
     ``may_skip_gate_now`` fails closed (an unreadable ceiling withholds), which is
-    the direction that matters: what is dropped here keeps prompting.
+    the direction that matters: what is dropped here keeps prompting. It is asked
+    for *agent_id*, so a profile no call by that agent can resolve to does not
+    withhold (``governance_profiles.any_configured_profile_governs``).
     """
     if not isinstance(allowed_tools, list):
         return []
@@ -445,7 +447,7 @@ def _ceiling_permitted(allowed_tools: Any, agent_id: str) -> list[str]:
         if not isinstance(raw, str) or not raw.strip():
             continue
         entry = raw.strip()
-        if may_skip_gate_now(entry):
+        if may_skip_gate_now(entry, agent=agent_id):
             permitted.append(entry)
         else:
             withheld.append(entry)
@@ -946,7 +948,7 @@ def to_client_custom_agent(
     permissions = merge_user_permissions(
         permissions,
         spec.get("permissions"),
-        ceiling_permits=may_skip_gate_now,
+        ceiling_permits=lambda ref: may_skip_gate_now(ref, agent=agent_id),
         audit_decision=lambda refs, outcome, reason: _audit_permission_decision(
             refs, outcome, reason, agent_id
         ),
@@ -962,7 +964,7 @@ def to_client_custom_agent(
     permissions = merge_user_permissions(
         permissions,
         translated,
-        ceiling_permits=may_skip_gate_now,
+        ceiling_permits=lambda ref: may_skip_gate_now(ref, agent=agent_id),
         audit_decision=lambda refs, outcome, reason: _audit_permission_decision(
             refs, outcome, reason, agent_id
         ),

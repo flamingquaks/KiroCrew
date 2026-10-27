@@ -154,7 +154,7 @@ class TestTranslation:
         assert _lost(settings) == ["subagent.trustedAgents", "web_fetch.trusted"]
 
     def test_an_over_long_pattern_is_reported_and_the_rest_still_travel(self, monkeypatch):
-        monkeypatch.setattr(kas_agents, "may_skip_gate_now", lambda ref: False)
+        monkeypatch.setattr(kas_agents, "may_skip_gate_now", lambda ref, **_: False)
         long = "/x" * 600
         spec = _spec(toolsSettings={"read": {"deniedPaths": [long, "~/.ssh"]}})
         assert _lost(spec["toolsSettings"]) == ["read.deniedPaths"]
@@ -191,7 +191,7 @@ class TestTranslation:
 
 class TestWireProjection:
     def test_denies_travel_whatever_the_ceiling(self, monkeypatch):
-        monkeypatch.setattr(kas_agents, "may_skip_gate_now", lambda ref: False)
+        monkeypatch.setattr(kas_agents, "may_skip_gate_now", lambda ref, **_: False)
         out = to_client_custom_agent(
             "a1", _spec(toolsSettings={"read": {"deniedPaths": ["~/.ssh"]}}), "p"
         )
@@ -200,7 +200,7 @@ class TestWireProjection:
         ]["rules"]
 
     def test_a_shell_allow_never_travels(self, monkeypatch):
-        monkeypatch.setattr(kas_agents, "may_skip_gate_now", lambda ref: True)
+        monkeypatch.setattr(kas_agents, "may_skip_gate_now", lambda ref, **_: True)
         spec = _spec(toolsSettings={"shell": {"allowedCommands": ["git status"]}})
         rules = to_client_custom_agent("a1", spec, "p").get("permissions", {}).get("rules", [])
         assert not [r for r in rules if r["capability"] == "shell" and r["effect"] == "allow"]

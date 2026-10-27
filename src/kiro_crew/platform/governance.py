@@ -449,6 +449,7 @@ def strip_ungoverned_auto_approve(
     audit: bool = True,
     third_party: Container[str] = (),
     honour_owner_written: bool = True,
+    agent: str = "",
 ) -> Dict[str, object]:
     """Return ``servers`` with a ceiling-governed ``autoApprove`` removed.
 
@@ -493,6 +494,10 @@ def strip_ungoverned_auto_approve(
     enterprise path is unchanged. The declarations are resolved here, not taken from
     the caller: of the six write paths reaching this helper only one could name them,
     and the other five would erase them.
+
+    *agent* names the spec the map belongs to when the writer knows it, and scopes
+    the profiles consulted the way :func:`may_skip_gate_now` does. Empty counts every
+    profile.
     """
     seeded = _declared_auto_approve(servers)
     honoured = _auto_approve_is_honoured()
@@ -502,7 +507,8 @@ def strip_ungoverned_auto_approve(
             out[name] = spec
             continue
         kept: list = []
-        if not may_skip_gate_now(f"@{name}"):
+        ref = f"@{name}"
+        if not (may_skip_gate_now(ref, agent=agent) if agent else may_skip_gate_now(ref)):
             pass  # governed: nothing survives, and the enterprise path is unchanged
         elif (
             honoured
@@ -796,7 +802,7 @@ def _operator_requires_confirmation(ref: str) -> bool:
     return server_requires_confirmation(server, patterns)
 
 
-def may_skip_gate_now(ref: str) -> bool:
+def may_skip_gate_now(ref: str, *, agent: str = "") -> bool:
     """:func:`may_skip_gate` against the CURRENTLY installed ceiling.
 
     The entry point every ``allowedTools`` writer should call: it folds in the one
@@ -814,8 +820,13 @@ def may_skip_gate_now(ref: str) -> bool:
 
     The operator's own ``hooks.confirm_tools`` opt-in withholds too: a server it
     names asks on every call, so no writer may grant it statically.
+
+    *agent* names the spec the grant is written into, when the writer knows it: a
+    profile no call by that spec can resolve to does not withhold it (see
+    ``governance_profiles.any_configured_profile_governs``). Empty counts every
+    profile.
     """
-    return _policy_may_skip_gate_now(ref) and not _operator_requires_confirmation(ref)
+    return _policy_may_skip_gate_now(ref, agent=agent) and not _operator_requires_confirmation(ref)
 
 
 def withheld_by_confirm_tools(ref: str) -> bool:
@@ -827,7 +838,7 @@ def withheld_by_confirm_tools(ref: str) -> bool:
     return _policy_may_skip_gate_now(ref) and _operator_requires_confirmation(ref)
 
 
-def _policy_may_skip_gate_now(ref: str) -> bool:
+def _policy_may_skip_gate_now(ref: str, *, agent: str = "") -> bool:
     """The security-policy half of :func:`may_skip_gate_now`: ceiling and profiles."""
     try:
         from kiro_crew.platform.context import current_context
@@ -847,7 +858,7 @@ def _policy_may_skip_gate_now(ref: str) -> bool:
     try:
         from kiro_crew.platform.governance_profiles import any_configured_profile_governs
 
-        if any_configured_profile_governs(ref):
+        if any_configured_profile_governs(ref, agent=agent):
             return False
     except Exception:  # pragma: no cover - defensive; cannot tell -> withhold
         logger.warning("cannot evaluate profiles for %r; not auto-approving", ref)

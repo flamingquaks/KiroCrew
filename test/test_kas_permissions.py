@@ -430,7 +430,7 @@ class TestTheDiskWriter:
         import kiro_crew.acp.kas_agents as kas_agents
 
         with pytest.MonkeyPatch.context() as patch:
-            patch.setattr(kas_agents, "may_skip_gate_now", lambda ref: ref == "@srv")
+            patch.setattr(kas_agents, "may_skip_gate_now", lambda ref, **_: ref == "@srv")
             out = to_client_custom_agent("kirocrew", {**config, "prompt": "p"}, "p")
         assert out["permissions"]["rules"] == [
             {"capability": "mcp", "match": ["srv/*"], "effect": "allow"}

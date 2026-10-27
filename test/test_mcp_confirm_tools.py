@@ -884,7 +884,7 @@ def test_withheld_by_confirm_tools_names_only_the_operators_own_withhold(monkeyp
     assert governance.withheld_by_confirm_tools("@atlassian")
     assert not governance.withheld_by_confirm_tools("@github")
     # A ref the security policy already refuses is the policy's, not confirm_tools'.
-    monkeypatch.setattr(governance, "_policy_may_skip_gate_now", lambda ref: False)
+    monkeypatch.setattr(governance, "_policy_may_skip_gate_now", lambda ref, agent="": False)
     assert not governance.withheld_by_confirm_tools("@atlassian")
     assert not governance.may_skip_gate_now("@github")
 

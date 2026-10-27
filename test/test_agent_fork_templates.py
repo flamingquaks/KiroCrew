@@ -994,7 +994,7 @@ class TestRefreshForkedTemplates:
             ceiling_calls.append(source)
             config["allowedTools"] = ["kept-by-ceiling"]
 
-        def fake_strip(servers: dict) -> dict:
+        def fake_strip(servers: dict, **_: object) -> dict:
             return {"stripped": {"command": "x"}}
 
         monkeypatch.setattr(agent_mod, "_apply_allowed_tools_ceiling", fake_ceiling)

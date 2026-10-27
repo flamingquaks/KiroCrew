@@ -448,7 +448,7 @@ class TestPermissionsProjection:
     def test_an_authored_allow_is_put_to_the_projection_time_ceiling(self, monkeypatch):
         """The same re-ask the derived rules get, for the same reason: projection
         reads a file, and the file can predate the ceiling that now governs it."""
-        monkeypatch.setattr(kas_agents, "may_skip_gate_now", lambda ref: ref != "@denied-srv")
+        monkeypatch.setattr(kas_agents, "may_skip_gate_now", lambda ref, **_: ref != "@denied-srv")
         mine = {
             "rules": [
                 {"capability": "mcp", "match": ["denied-srv/*"], "effect": "allow"},
@@ -463,7 +463,7 @@ class TestPermissionsProjection:
     def test_a_withheld_authored_allow_is_recorded_in_the_security_event_log(self, monkeypatch):
         """The same trail the derived path emits, through the same writer, because
         it is the same decision about the same ceiling."""
-        monkeypatch.setattr(kas_agents, "may_skip_gate_now", lambda ref: False)
+        monkeypatch.setattr(kas_agents, "may_skip_gate_now", lambda ref, **_: False)
         events: list[dict] = []
         monkeypatch.setattr(
             kas_agents,
@@ -504,7 +504,7 @@ class TestPermissionsProjection:
         assert out["permissions"]["rules"] == [{"capability": "web_fetch", "effect": "allow"}]
 
     def test_an_authored_deny_travels_even_where_the_ceiling_withholds(self, monkeypatch):
-        monkeypatch.setattr(kas_agents, "may_skip_gate_now", lambda ref: False)
+        monkeypatch.setattr(kas_agents, "may_skip_gate_now", lambda ref, **_: False)
         mine = {"rules": [{"capability": "shell", "match": ["rm *"], "effect": "deny"}]}
         out = to_client_custom_agent("a", _spec(allowedTools=["web_fetch"], permissions=mine), "p")
         assert out["permissions"]["rules"] == mine["rules"]
@@ -528,26 +528,26 @@ class TestTheCeilingIsReAskedAtProjectionTime:
     """
 
     def test_a_withheld_entry_is_dropped_from_the_projected_policy(self, monkeypatch):
-        monkeypatch.setattr(kas_agents, "may_skip_gate_now", lambda ref: ref != "@denied-srv")
+        monkeypatch.setattr(kas_agents, "may_skip_gate_now", lambda ref, **_: ref != "@denied-srv")
         out = to_client_custom_agent("a", _spec(allowedTools=["@denied-srv", "@ok-srv"]), "p")
         assert _rule(out["permissions"], "mcp")["match"] == ["ok-srv/*"]
 
     def test_withholding_everything_omits_the_field(self, monkeypatch):
-        monkeypatch.setattr(kas_agents, "may_skip_gate_now", lambda ref: False)
+        monkeypatch.setattr(kas_agents, "may_skip_gate_now", lambda ref, **_: False)
         out = to_client_custom_agent("a", _spec(allowedTools=["web_fetch"]), "p")
         assert "permissions" not in out
 
     def test_the_withholding_is_reported_so_a_missing_grant_is_explainable(
         self, monkeypatch, caplog
     ):
-        monkeypatch.setattr(kas_agents, "may_skip_gate_now", lambda ref: False)
+        monkeypatch.setattr(kas_agents, "may_skip_gate_now", lambda ref, **_: False)
         with caplog.at_level("INFO", logger="kiro_crew.acp.kas_agents"):
             to_client_custom_agent("kirocrew", _spec(allowedTools=["web_fetch"]), "p")
         assert "withholds auto-approval for web_fetch" in caplog.text
 
     def test_an_ungoverned_host_keeps_every_grant(self, monkeypatch):
         """``may_skip_gate_now`` answers True with no ceiling installed."""
-        monkeypatch.setattr(kas_agents, "may_skip_gate_now", lambda ref: True)
+        monkeypatch.setattr(kas_agents, "may_skip_gate_now", lambda ref, **_: True)
         out = to_client_custom_agent("a", _spec(allowedTools=["web_fetch"]), "p")
         assert out["permissions"]["rules"] == [{"capability": "web_fetch", "effect": "allow"}]
 
@@ -561,7 +561,7 @@ class TestTheCeilingIsReAskedAtProjectionTime:
         withheld here — the path that most needs the trail must not be the one
         without it.
         """
-        monkeypatch.setattr(kas_agents, "may_skip_gate_now", lambda ref: False)
+        monkeypatch.setattr(kas_agents, "may_skip_gate_now", lambda ref, **_: False)
         events: list[dict] = []
         monkeypatch.setattr(
             kas_agents,
@@ -578,7 +578,7 @@ class TestTheCeilingIsReAskedAtProjectionTime:
         assert "kirocrew" in events[0]["resources"]
 
     def test_nothing_withheld_emits_no_event(self, monkeypatch):
-        monkeypatch.setattr(kas_agents, "may_skip_gate_now", lambda ref: True)
+        monkeypatch.setattr(kas_agents, "may_skip_gate_now", lambda ref, **_: True)
         events: list[dict] = []
         monkeypatch.setattr(
             kas_agents,
@@ -596,7 +596,7 @@ class TestTheCeilingIsReAskedAtProjectionTime:
         Failing the projection because the audit sink is unavailable would turn a
         missing log line into a session that cannot start.
         """
-        monkeypatch.setattr(kas_agents, "may_skip_gate_now", lambda ref: False)
+        monkeypatch.setattr(kas_agents, "may_skip_gate_now", lambda ref, **_: False)
 
         def _broken():
             raise RuntimeError("no sink")

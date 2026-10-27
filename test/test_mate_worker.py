@@ -172,7 +172,7 @@ class TestTheProjectionReadsTheCrewmateFromTheSessionRecord:
         server -- the second, read-time application of the same ceiling."""
         from kiro_crew.acp import kas_agents
 
-        deny = lambda ref: not ref.startswith("@jira")  # noqa: E731
+        deny = lambda ref, **_: not ref.startswith("@jira")  # noqa: E731
         monkeypatch.setattr(governance, "may_skip_gate_now", deny)
         monkeypatch.setattr(kas_agents, "may_skip_gate_now", deny)
         merged = mate_worker.merge_worker_spec(BASE, mate_worker.worker_additions(BASE, _mate()))

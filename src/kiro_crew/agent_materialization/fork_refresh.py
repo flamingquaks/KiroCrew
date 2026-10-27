@@ -234,18 +234,20 @@ def hold_spawn_gate():
                 _fork_refresh_settled.set()
 
 
-def _apply_governance_passes(config: dict, *, source: str) -> None:
+def _apply_governance_passes(config: dict, *, source: str, agent: str = "") -> None:
     """Re-filter the two grant lists kiro-cli honours before the PreToolUse gate, in place.
 
     ``allowedTools`` goes through the ceiling and every governed server loses its
     ``autoApprove``. The shared-template pass runs these two alone: a shared template
     is the user's own file, so its ``mcp.json`` merge and KAS block stay as written. A
     fork gets the same two inside the governed tail (``auto_approve.govern_spec``).
+    *agent* is the bound name; it scopes both filters to the profiles a call by that
+    agent can resolve to.
     """
-    auto_approve._apply_allowed_tools_ceiling(config, source=source)
+    auto_approve._apply_allowed_tools_ceiling(config, source=source, agent=agent)
     servers_map = config.get("mcpServers")
     if isinstance(servers_map, dict):
-        config["mcpServers"] = auto_approve._strip_ungoverned_auto_approve(servers_map)
+        config["mcpServers"] = auto_approve._strip_ungoverned_auto_approve(servers_map, agent=agent)
 
 
 def _owned_spec_has_its_own_writer(name: str, owned_names: "set[str]") -> bool:
@@ -885,7 +887,7 @@ def _govern_json_spec(name: str, spec_path: Path, agents_dir: Path) -> bool:
             )
             return False
         before = copy.deepcopy(config)
-        _apply_governance_passes(config, source=f"shared-template-refresh:{name}")
+        _apply_governance_passes(config, source=f"shared-template-refresh:{name}", agent=name)
         if config != before:
             agent_mod._atomic_json_write(spec_path, config)
     return False

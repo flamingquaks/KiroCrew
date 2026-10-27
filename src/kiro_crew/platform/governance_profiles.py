@@ -1034,8 +1034,111 @@ def unknown_profile_scopes() -> "Dict[str, Tuple[str, ...]]":
     return out
 
 
-def any_configured_profile_governs(ref: str) -> bool:
-    """True if ANY loaded profile has an opinion on *ref*.
+#: App ids an in-process runner passes as ``app=`` to the PreToolUse gate while it
+#: drives agents the app does not declare (auto-improvement runs crew members under
+#: its own app context). A profile bound to one of these may govern any agent, so
+#: :func:`_profile_may_bind_agent` never scopes it. ``test_governance_profile_agent_scope``
+#: scans the package for literal ``app=`` gate arguments and pins them to this set.
+IN_PROCESS_AGENT_APP_CONTEXTS: "frozenset[str]" = frozenset(
+    {"auto-improvement", "code-review-sage"}
+)
+
+
+def _spawn_disabled(profile: Profile) -> bool:
+    """Whether *profile* switches ``capabilities.spawn`` off outright."""
+    from kiro_crew.platform.governance_parts.archetypes import CapabilityGate
+
+    gate = profile.get("capabilities.spawn")
+    return isinstance(gate, CapabilityGate) and not gate.enabled
+
+
+def _app_may_own_agent(app: str, agent: str) -> bool:
+    """Whether *agent* may be one of *app*'s own agents. Fails closed (True).
+
+    ``"missing"`` from the app registration check is the only proof that the app
+    did not register *agent*; anything else -- registered, ambiguous, unverifiable,
+    a lookup that raised -- counts as owned.
+    """
+    if agent.startswith(f"{app}--"):
+        return True
+    try:
+        from kiro_crew.apps.manager_lookup import _app_agent_registration
+
+        return _app_agent_registration(app, agent)[0] != "missing"
+    except Exception:  # noqa: BLE001 - cannot tell -> may own
+        logger.debug("app agent ownership lookup failed for %r/%r", app, agent, exc_info=True)
+        return True
+
+
+#: The dashboard API prefix whose routes create, resume and re-agent chat slots.
+#: A slot an app token opens carries that app's context with whatever agent the
+#: request body names, so an app reaching any of it can run agents it never
+#: registered.
+_APP_SESSION_API_PREFIX = "/api/chat"
+
+
+def _api_grant_reaches_sessions(pattern: str) -> bool:
+    """Whether a ``permissions.api`` entry can match a route under ``/api/chat``.
+
+    True when the entry's literal part is ``/api/chat`` or below it, or a prefix
+    of ``/api/chat`` (``/api/*``, ``/api/c*``, ``*``). The literal part is what
+    precedes a trailing ``*``, so every wildcard form the gate matches is covered.
+    """
+    base = pattern.strip().rstrip("*").rstrip("/")
+    if not base:
+        return True
+    return base.startswith(_APP_SESSION_API_PREFIX) or _APP_SESSION_API_PREFIX.startswith(base)
+
+
+def _app_may_host_sessions(app: str) -> bool:
+    """Whether *app* may open chat sessions that run an agent of its choosing.
+
+    Fails closed (True). Only an app whose manifest reads, declares no backend
+    (in-gateway or subprocess code can open slots directly), and declares no API
+    grant reaching ``/api/chat`` is known not to.
+    """
+    try:
+        from kiro_crew.apps.manager import get_app_manifest
+
+        manifest = get_app_manifest(app)
+        if manifest is None:
+            return True
+        if manifest.backend.to_dict():
+            return True
+        return any(_api_grant_reaches_sessions(p) for p in manifest.permissions.api if p)
+    except Exception:  # noqa: BLE001 - cannot tell -> may host sessions
+        logger.debug("app session capability lookup failed for %r", app, exc_info=True)
+        return True
+
+
+def _profile_may_bind_agent(profile: Profile, agent: str) -> bool:
+    """Whether a tool call made by the agent spec *agent* can resolve to *profile*.
+
+    Only an ``app`` bind is scoped. The gate resolves it only for a call carrying
+    that app's context, and such a call can come from four places: the app's own
+    agents, a sub-agent the app spawned, a chat session the app opened on any
+    agent, and an in-process runner listed in :data:`IN_PROCESS_AGENT_APP_CONTEXTS`.
+    So an app-bound profile that switches spawn off, for an app not on that list
+    and unable to open sessions, can only reach the app's own agents.
+    Every other bind stays global: a ``surface`` profile governs any agent on that
+    surface, and a ``task`` profile binds the member alias the gate is given, which
+    need not be the spec's name. An unknown agent, an unbound profile and a
+    fallback profile all count.
+    """
+    if not agent:
+        return True
+    bind = profile.bind
+    if bind is None or bind.type != "app":
+        return True
+    if bind.id in IN_PROCESS_AGENT_APP_CONTEXTS or not _spawn_disabled(profile):
+        return True
+    if _app_may_host_sessions(bind.id):
+        return True
+    return _app_may_own_agent(bind.id, agent)
+
+
+def any_configured_profile_governs(ref: str, *, agent: str = "") -> bool:
+    """True if ANY loaded profile that could bind *agent* has an opinion on *ref*.
 
     The static ``allowedTools`` writers decide auto-approve at config-BUILD time,
     where there is no surface/session to resolve the ONE profile a tool call
@@ -1050,6 +1153,11 @@ def any_configured_profile_governs(ref: str) -> bool:
     govern the ref" without duplicating the ref-parsing. Fail-closed: an
     unresolved store (never-loaded, mid first-load) answers True — "cannot confirm
     none governs" must not read as "none governs".
+
+    *agent* is the spec the grant is written into. When given, a profile that no
+    call by that spec can resolve to is left out (:func:`_profile_may_bind_agent`),
+    so an app-bound profile does not strip grants from agents the app cannot run.
+    Empty means "any agent": every profile counts.
     """
     from kiro_crew.platform.governance import may_skip_gate
 
@@ -1060,6 +1168,7 @@ def any_configured_profile_governs(ref: str) -> bool:
     # profile govern the ref" (see resolve, which is scope-map-agnostic).
     return any(
         not may_skip_gate(ref, profile)  # type: ignore[arg-type]
+        and _profile_may_bind_agent(profile, agent)
         for profile in _STORE.all_profiles()
     )
 

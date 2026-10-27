@@ -385,9 +385,9 @@ def shared_template(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     spec = tmp_path / "reviewer.json"
     monkeypatch.setattr(agent, "agent_spec_path", lambda name: tmp_path / f"{name}.json")
     # The tightened ceiling: denies the shell grant and every governed server's autoApprove.
-    monkeypatch.setattr(auto_approve, "_may_auto_approve", lambda ref: ref != "execute_bash")
+    monkeypatch.setattr(auto_approve, "_may_auto_approve", lambda ref, **_: ref != "execute_bash")
 
-    def strip(servers: dict[str, Any]) -> dict[str, Any]:
+    def strip(servers: dict[str, Any], **_: Any) -> dict[str, Any]:
         return {
             k: {kk: vv for kk, vv in v.items() if kk != "autoApprove"} for k, v in servers.items()
         }

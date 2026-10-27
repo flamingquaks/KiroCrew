@@ -1217,7 +1217,18 @@ retried, and a failure that outlasts the attempts holds the spec with the attemp
 warning.
 
 A **governance profile** governs the same lists: the writers ask `may_skip_gate_now`, which
-withholds a grant whenever any configured profile could govern the ref, so a profile saved
+withholds a grant whenever any configured profile could govern the ref. A writer that knows
+which spec it is filtering passes `agent=`, and the shared-template pass does: an `app`-bound
+profile then counts only when a call by that spec can carry the app's context, for its `allowedTools` and its servers' `autoApprove` alike (and the KAS
+projection asks the same question for the agent it projects), which is when
+the profile leaves `capabilities.spawn` on, when the app is an in-process runner
+(`governance_profiles.IN_PROCESS_AGENT_APP_CONTEXTS`, pinned against every literal `app=` gate
+argument), when the app may open chat sessions on an agent of its choosing (its manifest
+declares a backend, or a `permissions.api` entry reaching `/api/chat`, or does not read:
+`governance_profiles._app_may_host_sessions`), or when the app registered the spec
+(`apps.manager_lookup._app_agent_registration` not `"missing"`, or an `<app>--` name; a lookup
+that raises counts). `surface` and `task` binds,
+a fallback profile and a writer that names no agent still count every profile. So a profile saved
 after the spec was written has to re-derive it exactly as a ceiling move does. The memo the
 hook compares is therefore `governance_answer_generation()` (ceiling plus profiles), read
 after `poll_profiles_fresh` re-stats the profiles directory. Every `rebuild_agent_config`

@@ -68,8 +68,10 @@ def declared_auto_approve(emitted: Mapping[str, object]) -> dict[str, tuple[str,
     }
 
 
-def _strip_ungoverned_auto_approve(servers: dict[str, Any]) -> dict[str, Any]:
+def _strip_ungoverned_auto_approve(servers: dict[str, Any], *, agent: str = "") -> dict[str, Any]:
     """Local alias so tests can monkeypatch one name (see governance)."""
+    if agent:
+        return dict(strip_ungoverned_auto_approve(servers, agent=agent))
     return dict(strip_ungoverned_auto_approve(servers))
 
 
@@ -345,7 +347,7 @@ def _seed_kas_permissions(config: dict[str, Any]) -> None:
     _write_derived_permissions(config, config.get("allowedTools"), AGENT_FILENAME)
 
 
-def _may_auto_approve(ref: str) -> bool:
+def _may_auto_approve(ref: str, *, agent: str = "") -> bool:
     """Whether ``ref`` may go on an auto-approve list, per the governance ceiling.
 
     One-line delegate on purpose: the decision AND the ceiling resolution both
@@ -353,10 +355,10 @@ def _may_auto_approve(ref: str) -> bool:
     list cannot drift apart. Kept as a named local so it is monkeypatchable in
     tests without reaching into another module's namespace.
     """
-    return may_skip_gate_now(ref)
+    return may_skip_gate_now(ref, agent=agent) if agent else may_skip_gate_now(ref)
 
 
-def _apply_allowed_tools_ceiling(config: dict, *, source: str) -> None:
+def _apply_allowed_tools_ceiling(config: dict, *, source: str, agent: str = "") -> None:
     """Filter ``config["allowedTools"]`` through the governance ceiling, in place.
 
     ``allowedTools`` is the ONE path that never reaches the PreToolUse gate, so
@@ -376,6 +378,9 @@ def _apply_allowed_tools_ceiling(config: dict, *, source: str) -> None:
     ``mcp_auto_approve_withheld`` SEL record every other ``allowedTools``
     writer emits — best-effort, never raising, so an audit failure cannot
     break a build or an install.
+
+    *agent* is the spec's name when the writer knows which agent the file serves;
+    it narrows the profiles consulted to those a call by that agent can resolve to.
     """
     allowed = config.get("allowedTools")
     if not isinstance(allowed, list):
@@ -385,7 +390,8 @@ def _apply_allowed_tools_ceiling(config: dict, *, source: str) -> None:
     for ref in allowed:
         if not isinstance(ref, str):
             continue
-        (kept if _may_auto_approve(ref) else withheld).append(ref)
+        permitted = _may_auto_approve(ref, agent=agent) if agent else _may_auto_approve(ref)
+        (kept if permitted else withheld).append(ref)
     config["allowedTools"] = kept
     if withheld:
         try:

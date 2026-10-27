@@ -164,7 +164,9 @@ def agents_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         agent, "_kirocrew_mcp_invocation", lambda sub: ("/resolved/kirocrew", [sub])
     )
     # An ungoverned host as the gate sees it: no ceiling, the floor still on.
-    monkeypatch.setattr(agent, "_may_auto_approve", lambda ref: governance.may_skip_gate(ref, None))
+    monkeypatch.setattr(
+        agent, "_may_auto_approve", lambda ref, **_: governance.may_skip_gate(ref, None)
+    )
     return tmp_path
 
 
@@ -295,7 +297,7 @@ class TestUserGrantsSurviveRegeneration:
         install = getattr(agent, installer)
         install()
         _edit_allowed(agents_dir, filename, lambda lst: lst.append("execute_bash"))
-        monkeypatch.setattr(agent, "_may_auto_approve", lambda ref: ref != "execute_bash")
+        monkeypatch.setattr(agent, "_may_auto_approve", lambda ref, **_: ref != "execute_bash")
 
         with caplog.at_level(logging.WARNING):
             install()
@@ -710,11 +712,11 @@ class TestUserGrantsSurviveRegeneration:
         neither the file nor the history's "retired" side, so when the ceiling
         allows it again it is simply shipped again, beside the user's entry."""
         install = getattr(agent, installer)
-        monkeypatch.setattr(agent, "_may_auto_approve", lambda ref: ref != "report")
+        monkeypatch.setattr(agent, "_may_auto_approve", lambda ref, **_: ref != "report")
         install()
         assert "report" not in _read(agents_dir, filename)["allowedTools"]
         _edit_allowed(agents_dir, filename, lambda lst: lst.append(_USER_GRANT))
-        monkeypatch.setattr(agent, "_may_auto_approve", lambda ref: True)
+        monkeypatch.setattr(agent, "_may_auto_approve", lambda ref, **_: True)
         install()
         after = _read(agents_dir, filename)["allowedTools"]
         assert "report" in after and _USER_GRANT in after
@@ -971,7 +973,7 @@ class TestUserGrantsSurviveRegeneration:
             pytest.skip(f"hard links unavailable here: {exc}")
         shared_bytes = twin.read_bytes()
         shared_inode = os.stat(twin).st_ino
-        monkeypatch.setattr(agent, "_may_auto_approve", lambda ref: ref != "execute_bash")
+        monkeypatch.setattr(agent, "_may_auto_approve", lambda ref, **_: ref != "execute_bash")
 
         with caplog.at_level(logging.WARNING):
             wrote = install()
@@ -1263,7 +1265,9 @@ class TestASpecLeftInPlaceHoldsTheCeilingMemo:
         )
         real_gate = auto_approve._may_auto_approve
         monkeypatch.setattr(
-            auto_approve, "_may_auto_approve", lambda ref: ref != "web_fetch" and real_gate(ref)
+            auto_approve,
+            "_may_auto_approve",
+            lambda ref, **_: ref != "web_fetch" and real_gate(ref),
         )
         before = template.read_bytes()
         real_write = agent._atomic_json_write
@@ -1409,7 +1413,9 @@ class TestASpecLeftInPlaceHoldsTheCeilingMemo:
         )
         real_gate = auto_approve._may_auto_approve
         monkeypatch.setattr(
-            auto_approve, "_may_auto_approve", lambda ref: ref != "web_fetch" and real_gate(ref)
+            auto_approve,
+            "_may_auto_approve",
+            lambda ref, **_: ref != "web_fetch" and real_gate(ref),
         )
         rebuilds: list[int] = []
         real_reporting = agent.rebuild_agent_config_reporting
