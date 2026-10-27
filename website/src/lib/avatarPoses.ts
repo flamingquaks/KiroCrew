@@ -241,8 +241,9 @@ export function poseDataUri(pose: string | undefined, bg: string | undefined): s
   return `data:image/svg+xml;utf8,${encodeURIComponent(painted)}`
 }
 
-/** The pose's background rect, matched whole so the moving layer can drop it. */
-const RECT_RE = /<rect\b[^>]*\/>/
+/** Every self-closing rect in a pose, matched whole so the moving layer drops
+ *  the tile wherever it sits, never only the first one. */
+const RECT_RE = /<rect\b[^>]*\/>/g
 
 /**
  * The pose with its background tile removed: the white silhouette and the black
