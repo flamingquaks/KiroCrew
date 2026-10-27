@@ -956,14 +956,14 @@ class CompactionCoordinator:
                 # claims a missing capability the harness has.
                 self.state.uncompactable_recycles.discard(key)
 
-    def _live_cotenants(self, runs: Any, key: str) -> list[str]:
-        """Ids of *key*'s runs that are live on a process they share with it."""
-        return [
-            info.id
-            for info in runs.running
-            if info.parent_session_key == key
-            and runs.has_live_shared_session(info.conversation_key or f"subagent:{info.id}")
-        ]
+    @staticmethod
+    def _live_cotenants(lifecycle: Any, key: str) -> list[str]:
+        """Ids of *key*'s runs that are live on a process they share with it.
+
+        The same selection a hard Stop's reset stops (``_select_shared_children``),
+        so the two cannot disagree about which runs share the process.
+        """
+        return [info.id for info in lifecycle._select_shared_children(key)]
 
     async def _await_cotenants(
         self, key: str, pct: float, *, stopped: Callable[[], bool] | None = None
@@ -986,7 +986,7 @@ class CompactionCoordinator:
         lifecycle = self._owner._lifecycle_boundary()
         # The ``SubagentManager`` registered as the parent-end teardown handler.
         runs = lifecycle._child_teardown
-        if runs is None or not self._live_cotenants(runs, key):
+        if runs is None or not self._live_cotenants(lifecycle, key):
             return True
         self._deps.logger.warning("Session %s restart held: sub-agents share its process", key)
         callback = self.state.on_compacted
@@ -999,7 +999,7 @@ class CompactionCoordinator:
                 self._deps.logger.exception("Compact callback failed for %s", key)
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self._deps.cotenant_wait_secs
-        while ids := self._live_cotenants(runs, key):
+        while ids := self._live_cotenants(lifecycle, key):
             if stopped is not None and stopped():
                 return False
             remaining = deadline - loop.time()

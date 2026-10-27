@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 from kiro_crew.messaging.link import canonical_key
+from kiro_crew.session_lifecycle_parts.parent_end import _CHILD_CANCEL_TIMEOUT_SECS
 from kiro_crew.session_lifecycle_parts.parked_queue import _park_queue
 from kiro_crew.session_lifecycle_parts.stop_decline import StopOutcome, _compaction_waits_for_turn
 
@@ -27,6 +28,10 @@ if TYPE_CHECKING:
 
 
 CancelOutcome = Literal["acked", "timeout", "no_turn", "error"]
+
+#: How often a hard Stop's reset re-reads whether the shared runs it is stopping
+#: have a final record. Short: the reset holds the Stop until they do.
+_SHARED_CHILD_POLL_SECS = 0.05
 
 
 @dataclass(slots=True)
@@ -375,7 +380,9 @@ async def stop_turn(
         if late:
             session.queue.clear()
             _park_queue(owner, key, late)
-    await owner.reset(key)
+    # The runs that share this parent's process die with it, so the reset
+    # stops them first, by name, after its pop (``stop_shared_children``).
+    await owner.reset(key, stop_shared_children=True)
     elapsed = self._deps.monotonic() - t0
     logger.info(
         "stop_turn outcome=hard-done session=%s elapsed=%.2fs",
@@ -393,6 +400,98 @@ async def stop_turn(
         except Exception:
             logger.warning("on_hard hook failed for %s", key, exc_info=True)
     return "hard"
+
+
+def _select_shared_children(self: SessionLifecycleService, key: str) -> tuple[Any, ...]:
+    """The run records of *key*'s sub-agents that share its process, for a hard Stop's reset.
+
+    The reset is a recycle and spares the parent's runs by design, but it shuts
+    down the process a session-sharing run lives on (the parent's own runtime, or
+    the companion runtime the reset releases). Left to that, each such run dies
+    as a runtime death nothing claimed: ``_run`` reads the death as an echo of a
+    teardown only under ``_reap_started``, so it records a failure with
+    "killed (provider shutdown)" for a run the user just stopped. The reset
+    therefore stops these runs itself (:func:`_stop_shared_children`) before the
+    provider shutdown. A run on a dedicated process survives the recycle and is
+    left alone. The compaction restart's wait for co-tenants
+    (``CompactionCoordinator._live_cotenants``) reads the same selection.
+
+    Synchronous, for the reason ``_snapshot_parent_children`` is: the reset calls
+    it in the lock hold that pops the session, before any await could let a
+    successor's runs register under the same key.
+    """
+    runs: Any = self._child_teardown
+    if runs is None or not key:
+        return ()
+    try:
+        return tuple(
+            info
+            for info in runs.running
+            if info.parent_session_key == key
+            and runs.has_live_shared_session(info.conversation_key or f"subagent:{info.id}")
+        )
+    except Exception:
+        self._deps.logger.exception(
+            "Listing the sub-agents that share the process of %s failed", key
+        )
+        return ()
+
+
+async def _stop_shared_children(
+    self: SessionLifecycleService, key: str, targets: "tuple[Any, ...]"
+) -> None:
+    """Stop the runs :func:`_select_shared_children` named, ahead of the shutdown.
+
+    Each run is named as a neutral user stop with an origin that says which Stop
+    it was, unless a reap already in flight wrote its own cause. The stamps go on
+    here, next to the cancel, rather than at the selection: a deadline reap that
+    starts in between keeps the cause it is entitled to.
+
+    ``cancel`` is the ordinary single-run Stop: it sets ``_reap_started`` before
+    the run's session is torn down, so the death that follows is read as the
+    echo of this stop, and the run reports "stopped" into the conversation the
+    respawn resumes. The first stopper of a run also waits for that report to be
+    delivered, which needs the parent this reset is replacing, so the cancels run
+    as a background task and this waits only until each run has recorded its
+    ending (``done``), which may still precede the reap's kill verdict. Bounded like a parent end by ``_CHILD_CANCEL_TIMEOUT_SECS``, so an
+    unresponsive child cannot hold the Stop open.
+    """
+    runs: Any = self._child_teardown
+    if runs is None or not targets:
+        return
+    logger = self._deps.logger
+
+    async def _cancel_one(info: Any) -> bool:
+        if not info._reap_started:
+            if not info._reap_reason:
+                info._reap_reason = "user_stop"
+            if not info._stop_origin:
+                info._stop_origin = "stopped by a hard Stop of the parent"
+        return await runs.cancel(info.id)
+
+    async def _cancel_targets() -> None:
+        await asyncio.gather(*(_cancel_one(info) for info in targets), return_exceptions=True)
+
+    ids = [info.id for info in targets]
+    logger.warning("Hard Stop %s: stopping sub-agents %s that share its process", key, ids)
+    task = asyncio.create_task(_cancel_targets())
+    self._owner._background_tasks.add(task)
+    task.add_done_callback(self._owner._background_tasks.discard)
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _CHILD_CANCEL_TIMEOUT_SECS
+    while not task.done() and not all(info.done for info in targets):
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            logger.warning(
+                "Hard Stop %s: stopping sub-agents %s exceeded %.0fs; it continues in the "
+                "background and the reset still runs",
+                key,
+                ids,
+                _CHILD_CANCEL_TIMEOUT_SECS,
+            )
+            return
+        # ``asyncio.wait`` never cancels the task it watches.
+        await asyncio.wait({task}, timeout=min(remaining, _SHARED_CHILD_POLL_SECS))
 
 
 async def _send_abort_for_session(self: SessionLifecycleService, key: str, session: Any) -> None:
