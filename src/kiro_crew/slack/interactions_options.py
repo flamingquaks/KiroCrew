@@ -98,7 +98,10 @@ _ACTION_PREFIX = "action::"
 
 
 def _forget_options_control(
-    thread_ts: str, ts: str | None = None, keys: tuple[str, ...] | None = None
+    thread_ts: str,
+    ts: str | None = None,
+    keys: tuple[str, ...] | None = None,
+    channel: str | None = None,
 ) -> None:
     """Drop the recorded OPTIONS control for *thread_ts*'s conversation.
 
@@ -112,12 +115,19 @@ def _forget_options_control(
     edit moves the thread to another session, so resolving the keys afterwards
     names the NEW owner and leaves the previous owner's record behind — whose next
     turn then edits over the selection.
+
+    *channel* with *ts* also drops the record of that one message under whatever
+    key holds it. A card posted top-level (a code channel's own replies) carries
+    no ``thread_ts``, so the thread a click falls back to is the card itself and
+    the keys resolved from it name no session at all.
     """
     if not _orch or not thread_ts:
         return
     try:
 
-        forget_slack_options_for_thread(_orch.dashboard_state, thread_ts, ts, keys=keys)
+        forget_slack_options_for_thread(
+            _orch.dashboard_state, thread_ts, ts, keys=keys, channel=channel
+        )
     except Exception:
         logger.debug("Failed to clear recorded OPTIONS control", exc_info=True)
 
@@ -323,9 +333,12 @@ async def _refuse_stale_options(channel: str, msg_ts: str, payload: dict) -> Non
             # An accepted click already holds the claim and has rendered its
             # selection. Leave the message exactly as that click left it.
             return
-        mark_options_terminal(channel, msg_ts)
+        # The claim, held unsettled, already refuses every later click. It is
+        # marked terminal (settled) only once the strike-through lands: a failed
+        # strike leaves the buttons on screen, so a later turn's expiry must still
+        # find the control unsettled and strike it.
         try:
-            await expire_options(
+            struck = await expire_options(
                 _orch.slack,
                 PostedOptions(
                     channel=channel,
@@ -335,12 +348,15 @@ async def _refuse_stale_options(channel: str, msg_ts: str, payload: dict) -> Non
                 ),
             )
         except Exception:
+            struck = False
             logger.debug(
                 "could not strike through the stale OPTIONS control %s/%s",
                 channel,
                 msg_ts,
                 exc_info=True,
             )
+        if struck:
+            mark_options_terminal(channel, msg_ts)
 
 
 _ALREADY_ANSWERED = "Already answered."
@@ -566,7 +582,7 @@ async def _answer_options(
             # longer has to be pinned against a late click and may be evicted if
             # the map fills. While the original IS still live the claim stays put.
             settle_options_answer(channel, msg_ts)
-            _forget_options_control(thread_ts, msg_ts, keys=_owner_keys)
+            _forget_options_control(thread_ts, msg_ts, keys=_owner_keys, channel=channel)
 
     action_context = (
         "--- CONTEXT ENTRY BEGIN ---\n"

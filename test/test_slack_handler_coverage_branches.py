@@ -629,7 +629,9 @@ class TestHandleMessageKeywordDispatch:
         ("text", "expected"),
         [
             pytest.param(
-                "!dashboard", "Not authorized.", id="test_allowed_user_command_denied_for_a_stranger"
+                "!dashboard",
+                "Not authorized.",
+                id="test_allowed_user_command_denied_for_a_stranger",
             ),
             pytest.param(
                 "!agent kirocrew",
