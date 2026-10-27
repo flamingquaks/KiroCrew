@@ -63,6 +63,7 @@ from kiro_crew.dashboard import (  # noqa: F401
     chat,
     crewmate_feed,
     handlers,
+    members_roster_goals,
     slot_retention,
     tailnet,
     tailnet_serve,
@@ -794,6 +795,8 @@ async def start_dashboard(
     # whichever thread happens to arrive first.
     state.bind_serving_loop(asyncio.get_running_loop())
     crewmate_feed.start(state)  # the goal and waiting folds a crewmate's page reads
+    # The roster's has_goal / heartbeat_on re-read after every goal write.
+    members_roster_goals.start_roster_refresh(state)
     # Voice settings live in slack/handler's module state and are otherwise
     # loaded only on the Slack startup path (set_orch_cfg) — without this a
     # dashboard-only gateway (no Slack tokens) resets TTS to defaults on
@@ -1185,6 +1188,12 @@ async def start_dashboard(
             await _stop_spawned_backends()
         _dashboard_sock.close()
         raise
+    # After the bind, never on the boot path (no-new-work-on-gateway-boot-path):
+    # from here an app cron naming a missing folder creates it through the
+    # dashboard's own folder service. Boot-time registration stays read-only.
+    from kiro_crew.dashboard.handlers.cron_board import wire_app_cron_folder_creator
+
+    wire_app_cron_folder_creator(state)
     # The listener is up -- keep it up. One failed accept() on Windows would
     # otherwise close it for the life of the process (see listener_guard).
     _arm_listener_guard(state, runner, site)

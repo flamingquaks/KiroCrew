@@ -16,13 +16,13 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from aiohttp import web
 
+from kiro_crew._facade_bindings import own_methods
 from kiro_crew.config.loader import DASHBOARD_PORT, config_dir
 from kiro_crew.dashboard import pinned_session_order
 from kiro_crew.dashboard.folder_repository import FOLDERS_FILE
 from kiro_crew.dashboard.interaction_coordinator import ApprovalCoordinator, QuestionCoordinator
 from kiro_crew.dashboard.slot_registry import SlotRegistry
 from kiro_crew.dashboard.state_parts import dashboard_services as _dashboard_services
-from kiro_crew.dashboard.state_parts import own_methods
 from kiro_crew.dashboard.state_parts import session_events as _session_events
 from kiro_crew.dashboard.state_parts import sidebar_stores as _sidebar_stores
 from kiro_crew.dashboard.state_parts import slot_directory as _slot_directory
@@ -560,8 +560,10 @@ class DashboardState:
         self._warm_task_brief_not_before: dict[str, float] = {}
         self._warm_task_brief_tasks: dict[str, asyncio.Task[Any]] = {}
         self._warm_task_brief_model_active: set[str] = set()
-        # Threads whose in-flight model call was left behind by a departure.
+        # Threads whose in-flight model call was dropped by a real cancel.
         self._warm_task_brief_abandoned: set[str] = set()
+        # Threads whose brief has posted its opener: leaving keeps the brief.
+        self._warm_task_brief_opened: set[str] = set()
         self._slack_to_slot: dict[str, str] = {}  # Slack session_key → slot name
         # Live OPTIONS controls, keyed by the SESSION KEY that owns them.
         #
@@ -1195,6 +1197,10 @@ class DashboardState:
     broadcast_ws_owners = _slots_push.broadcast_ws_owners
     ws_client_count = _slots_push.ws_client_count
     dashboard_user_ws_count = _slots_push.dashboard_user_ws_count
+    set_fold_delta_capable = _slots_push.set_fold_delta_capable
+    set_fold_watch = _slots_push.set_fold_watch
+    fold_watch_routing = _slots_push.fold_watch_routing
+    add_fold_watch_listener = _slots_push.add_fold_watch_listener
     broadcast_browser_event = _slots_push.broadcast_browser_event
     register_ws = _slots_push.register_ws
     send_members_subscribed = _slots_push.send_members_subscribed
@@ -1220,4 +1226,20 @@ class DashboardState:
     finish_slot_list_rebuild = _slot_list_hold.finish_slot_list_rebuild
 
 
-own_methods(DashboardState)
+#: The owners whose functions :class:`DashboardState` binds as its members, this shell included.
+_MEMBER_OWNERS = frozenset(
+    {
+        "kiro_crew.dashboard.state_parts.dashboard_services",
+        "kiro_crew.dashboard.state_parts.dashboard_state",
+        "kiro_crew.dashboard.state_parts.session_events",
+        "kiro_crew.dashboard.state_parts.sidebar_stores",
+        "kiro_crew.dashboard.state_parts.slot_directory",
+        "kiro_crew.dashboard.state_parts.slot_list_hold",
+        "kiro_crew.dashboard.state_parts.slots_frame",
+        "kiro_crew.dashboard.state_parts.slots_push",
+        "kiro_crew.dashboard.state_parts.source_links",
+        "kiro_crew.dashboard.state_parts.status_payload",
+    }
+)
+
+own_methods(DashboardState, _MEMBER_OWNERS)

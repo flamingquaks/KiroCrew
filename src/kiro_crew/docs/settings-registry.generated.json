@@ -19,7 +19,7 @@
       "label": "Update the gateway automatically",
       "tab": "about",
       "route": "/settings/about?highlight=key%3Aauto_update",
-      "description": "Installs a new release once no work is running and restarts the gateway, on installs that can update themselves.",
+      "description": "Restarts the gateway to install a new release once no work is running. When off, it stays on its current version.",
       "configKey": "auto_update"
     },
     {
@@ -721,7 +721,7 @@
       "label": "Prevent sleep while running",
       "tab": "chat",
       "route": "/settings/chat/advanced?highlight=key%3Adashboard.prevent_sleep",
-      "hint": "Keep your computer awake while a task is running",
+      "hint": "Keep your computer awake while a task is running. On some Windows laptops (Modern Standby), locking the screen can still let it sleep, so keep the screen on for long tasks.",
       "configKey": "dashboard.prevent_sleep"
     },
     {
@@ -1129,6 +1129,13 @@
       "description": "Uses the KAS engine version this Kiro Crew release was tested with, instead of the Kiro CLI. Applies to every new session on this Kiro Crew, not just this device. Signs in with your Kiro account from Settings → Agent Harness. Takes effect when Kiro Crew restarts."
     },
     {
+      "id": "developer.session-environments",
+      "label": "Session Environments",
+      "tab": "developer",
+      "route": "/settings/developer?highlight=developer.session-environments",
+      "description": "Shows the Session Environments settings. Existing chats stay on this machine; a chat moves only if you pick a profile for it before its first message."
+    },
+    {
       "id": "developer.webhooks",
       "label": "Webhooks",
       "tab": "developer",
@@ -1509,6 +1516,35 @@
       "tab": "security",
       "route": "/settings/security/rules?highlight=security.your-custom-denies",
       "description": "Add your own deny patterns (Python-compatible regex). These are enforced at {{productName}}'s PreToolUse gate alongside the built-in rules."
+    },
+    {
+      "id": "session-environments.coder-url",
+      "label": "Coder URL",
+      "tab": "session-environments",
+      "route": "/settings/session-environments?highlight=key%3Asession_environments.coder_url",
+      "description": "Use the deployment URL without credentials, query parameters, or fragments, for example https://coder.example.com.",
+      "configKey": "session_environments.coder_url"
+    },
+    {
+      "id": "session-environments.default-for-new-chats",
+      "label": "Default for new chats",
+      "tab": "session-environments",
+      "route": "/settings/session-environments?highlight=session-environments.default-for-new-chats",
+      "description": "New chats you start in the dashboard run here unless you pick another profile in the “Run this chat on” menu before the first message. Existing chats, scheduled jobs and channel conversations keep running where they do now."
+    },
+    {
+      "id": "session-environments.start-new-chats-on-a-profile",
+      "label": "Start new chats on a profile",
+      "tab": "session-environments",
+      "route": "/settings/session-environments?highlight=key%3Asession_environments.default_profile",
+      "configKey": "session_environments.default_profile"
+    },
+    {
+      "id": "session-environments.stop-workspaces-when-kiro-crew-shuts-down",
+      "label": "Stop workspaces when Kiro Crew shuts down",
+      "tab": "session-environments",
+      "route": "/settings/session-environments?highlight=key%3Asession_environments.stop_on_shutdown",
+      "configKey": "session_environments.stop_on_shutdown"
     },
     {
       "id": "shortcuts.enable-shortcuts",

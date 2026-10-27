@@ -2729,7 +2729,7 @@ The REST listing's app bound gates on the presence of the caller's app CLAIM, ne
 
 The record lives in its own top-level `panel-dismissals/` leaf of the data home, OUTSIDE the run folder, and deliberately NOT under `trust/`. A dismissal is an OWNER decision about what the panel hides, which makes it the same class of record as `crew-panels`, `crew-teams` and `tag-grants` — and each of those is its own top-level leaf precisely because `trust/` is a declared sandbox READ-WRITE exception (in-sandbox `verify_session_pid` reads `trust/sel_hmac.key` and the in-sandbox MCP servers append to the audit log). A record under `trust/` stays writable by a sandboxed command that builds the path at runtime, which command matching cannot catch because it has no literal path to match; the cleanup identities that live there are not a precedent for adding records to it. So the leaf is registered in four places, and because nothing in the code fails when one is missing, each is pinned by name in `TestTheDismissalStoreIsRegisteredEverywhereItMustBe`: `paths._CREW_SECRET_LEAVES` for the file gate, `sandbox._CREW_HIDDEN_LEAVES` for the bind mask, `_CREW_PRECREATE_HIDDEN_DIR_LEAVES` because the directory is created on the first dismissal and the mask loop SKIPS a name that does not exist, and `_CREW_NO_ALIAS_LEAVES` because a symlink would attach the mask to the target and leave the name writable. `state.json` and `tombstone.json`, by contrast, are agent-writable, so a marker kept in there would let a run hide its own card from every later rebuild. The write goes through `atomic_write(..., restrict_to_owner=True)` so the lockdown lands on the temp file before the payload and before the rename. The run FOLDER is deliberately left in place rather than deleted — `spawn_continue` reseeds its session map from that folder's `state.json`, so removing it to hide a card would also destroy a conversation the user can still continue, and would take the result text and the prune bookkeeping with it. The reader fails OPEN: an unreadable record yields no id, so a filesystem fault resurrects a dismissed card, which the user can dismiss again, rather than hiding a run nobody dismissed. Records are reclaimed with their folder at both removal sites (`delete_agent_folder` and `prune_stale_tombstones`), and `prune_orphan_panel_dismissals` sweeps once per prune cycle for a folder that left by some other route.
 
-Native kiro-cli subagents run inside the parent ACP turn and are owned by the parent dashboard slot. `DashboardState.native_subagent_snapshots()` replays running native cards as `subagent_snapshot` and recent terminal cards as `subagent_done`. A native `subagent_done` payload may include optional `task`, `agent`, and `result` fields. `result` is a redacted output tail bounded to 8,000 characters, with an explicit truncation marker when earlier output was dropped. Running output retained for replay is bounded to 40,000 characters, with an 80,000-character hard accumulation ceiling. Terminal native records are retained globally up to 50 cards for at most one hour. The client treats `done` and `error` as monotonic terminal states, so a stale running snapshot interleaved after a live completion cannot demote the card.
+Native subagents (kiro-cli's, KAS's, and Claude Code's Agent tool on the claude backend) run inside the parent ACP turn and are owned by the parent dashboard slot. `DashboardState.native_subagent_snapshots()` replays running native cards as `subagent_snapshot` and recent terminal cards as `subagent_done`. A native `subagent_done` payload may include optional `task`, `agent`, and `result` fields. `result` is a redacted output tail bounded to 8,000 characters, with an explicit truncation marker when earlier output was dropped. Running output retained for replay is bounded to 40,000 characters, with an 80,000-character hard accumulation ceiling. Terminal native records are retained globally up to 50 cards for at most one hour. The client treats `done` and `error` as monotonic terminal states, so a stale running snapshot interleaved after a live completion cannot demote the card.
 
 **Redaction**: All subagent event payloads (running snapshots and done events) have the `agent` field redacted before sending to the dashboard. Task text is redacted before truncation to prevent credential patterns spanning the boundary.
 
@@ -2817,6 +2817,20 @@ per-sub-agent completion note. Dashboard chat only.
   says the output is not a finished result. The dispatch is never refused and
   its reply carries no note: whether a task needs writes is not decidable from
   its prose, and the narration arrives in the completion, not the dispatch.
+- **A leaked final tool call** — a run can end on a normal `end_turn` with its
+  last tool call written into its text instead of run. The run reads the text
+  streamed after its last tool call (a `tool_call` frame or the run's own
+  permission request; a child escalation is not one) -- its final segment -- with the
+  dashboard's own `has_leaked_tool_call` (quoted code is ignored) and records
+  `SubagentInfo.leaked_tool_call`, carried on `subagent_done`. The note rides
+  where the no-tool-calls note does: one ``⚠ Agent `<id>` ended with a tool call
+  written as text…`` line on the lone completion event and under the member's
+  digest entry, a `leaked_tool_call` field on the `spawn_sub_agents` record, and
+  `leaked_tool_call` on `GET /api/spawn/{id}` for a completed run
+  (`constants.LEAKED_TOOL_CALL_NOTE`). Notice-only, like the dashboard's
+  mixed-turn leak notice (`should_notice_mixed_turn_leak`): earlier calls may
+  already have taken effect, so the outcome stays `completed`, nothing is
+  re-issued, and a failed or stopped run is not flagged.
 - **Per-result turns kept** — each completion is still processed in its own turn
   (no raw buffering) to avoid a context-window blowup; the synthesis works over
   the already-condensed per-result turns.
@@ -3717,7 +3731,9 @@ Native kiro-cli `subagent`/`use_subagent` crews run inside the parent's
 kiro-cli process rather than as Kiro Crew-owned sessions. Kiro Crew surfaces
 those in the Activity tab too, by observing kiro-cli's sub-agent
 notifications — one card per sub-agent, with each inner tool call and its
-output attributed to the right card.
+output attributed to the right card. Claude Code's Agent tool on the claude
+backend gets the same cards from the adapter's `subagent_update` notifications
+([claude-code-provider](claude-code-provider.md), "Native subagents").
 
 ```python
 spawn_sub_agents(agents=[
@@ -4271,6 +4287,19 @@ and `subagent.AGENT_INTERNAL_CODE`, returned by `_validate_agent`, and
 `subagent.AGENT_NOT_AVAILABLE_CODE`, set by the gate — carried on `SubagentInfo.error_code`, and
 forwarded by the handler without being respelled there, so each value has exactly
 one spelling in the tree.
+
+**Stopped before it started.** A row `spawn()` accepted whose claim the store then
+refuses because the run was stopped while it waited (`CLAIM_REFUSED`) comes back as a
+terminal placeholder: `queued`, `done` and `user_stopped`, with no `error`. Nothing
+runs and no card or completion event follows. `subagent_wait_reasons.stopped_before_start`
+is the one test for that record; a live run stopped during its start is not `queued`
+and keeps its id. Every surface that starts a run reads it: `POST /api/spawn`,
+`POST /api/spawn/{id}/continue` and `POST /api/spawn/{id}/retry` answer `409` with
+`code: "stopped_before_start"` instead of `status: "spawned"` (`POST /api/spawn`
+adds `counted: true`, since the submission was counted, and the retry route releases
+its claim, so the failed run stays retryable); the channel `spawn` command replies that
+the subagent was stopped before it started; and the app spawn SDK raises `SpawnError`
+instead of returning an id that never runs.
 
 `spawn_run` switches on those codes for the wave short-circuit (#4842): once the
 gateway has refused an agent name, the remaining members of a wave sharing it are

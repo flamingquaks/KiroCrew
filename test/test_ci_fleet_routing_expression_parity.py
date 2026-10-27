@@ -10,6 +10,7 @@ they carry is the merge-queue push skip pinned below.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 from pathlib import Path
 
@@ -116,6 +117,19 @@ _PERMANENT_EXCEPTIONS = {
     ("design-review.yml", "design-review"),
     ("ci-runner-watchdog.yml", "watchdog"),
 }
+
+# A permanent exception stays OFF the CodeBuild fleet; it does not have to stay
+# on the shared standard runner. These lanes moved to the `kirocrew-runners`
+# larger-runner group, which is still a GitHub-hosted Ubuntu VM with the same
+# filesystem layout and no fleet credentials, so every isolation contract above
+# still holds. Pinned per job rather than waived: a lane that drifts to some
+# third runner must still fail this check.
+_HOSTED_EXCEPTION_RUNNERS: dict[tuple[str, str], object] = {
+    ("first-principles-review.yml", "first-principles-review"): {"group": "kirocrew-runners"},
+    ("ux-review.yml", "ux-review"): {"group": "kirocrew-runners"},
+    ("design-review.yml", "design-review"): {"group": "kirocrew-runners"},
+}
+_DEFAULT_HOSTED_EXCEPTION_RUNNER = "ubuntu-latest"
 
 # Fixed expectations, never inferred from the workflow contents: a route
 # silently removed or a new unreviewed fleet job must fail the inventory check.
@@ -336,8 +350,16 @@ def test_every_job_using_the_routing_expression_is_accounted_for() -> None:
     assert (
         set(exception_runs_on) == _PERMANENT_EXCEPTIONS
     ), f"missing hosted exceptions: {_PERMANENT_EXCEPTIONS - set(exception_runs_on)}"
+    # A key that names no exception pins nothing, so a rename would silently
+    # fall back to the default and read as a pass.
+    assert not set(_HOSTED_EXCEPTION_RUNNERS) - _PERMANENT_EXCEPTIONS, (
+        "pinned runners name jobs that are not exceptions: "
+        f"{set(_HOSTED_EXCEPTION_RUNNERS) - _PERMANENT_EXCEPTIONS}"
+    )
     wrong_runner = {
-        key: value for key, value in exception_runs_on.items() if value != "ubuntu-latest"
+        key: value
+        for key, value in exception_runs_on.items()
+        if value != _HOSTED_EXCEPTION_RUNNERS.get(key, _DEFAULT_HOSTED_EXCEPTION_RUNNER)
     }
     assert not wrong_runner, f"hosted exception changed runner: {wrong_runner}"
 
@@ -439,8 +461,6 @@ def test_merge_queue_readiness_budget_covers_ci_critical_path() -> None:
     `timeout-minutes` must in turn exceed the budget, so the step's error -- not
     the job cap -- is what names the lane still pending.
     """
-    import re
-
     readiness = yaml.safe_load(
         (_WORKFLOWS_DIR / "merge-queue-readiness.yml").read_text(encoding="utf-8")
     )
@@ -459,6 +479,13 @@ def test_merge_queue_readiness_budget_covers_ci_critical_path() -> None:
         strategy = spec.get("strategy") or {}
         matrix = strategy.get("matrix")
         cap = strategy.get("max-parallel")
+        # CodeBuild-routed jobs use a conditional expression; on the hosted
+        # fallback the expression evaluates to the `|| N` value.  Use that
+        # fallback for worst-case round counting so the budget test guards
+        # the hosted path.
+        if isinstance(cap, str):
+            m = re.search(r"\|\|\s*(\d+)\s*\}\}", cap)
+            cap = int(m.group(1)) if m else None
         if not isinstance(matrix, dict) or not isinstance(cap, int):
             return 1
         axes = [v for k, v in matrix.items() if k not in ("include", "exclude")]
@@ -501,8 +528,6 @@ def test_merge_queue_readiness_rollout_values() -> None:
     The poll has no rerun cap because it never reruns: a rerun inside the queue
     holds every group behind this one for the rerun's whole duration.
     """
-    import re
-
     job = _readiness_job()
     (step,) = job["steps"]
     values = dict(re.findall(r"^\s*(TOTAL_BUDGET|MAX_RERUNS)=(\d+)\s*$", step["run"], re.MULTILINE))
@@ -706,8 +731,6 @@ def test_merge_queue_readiness_reads_one_listing_per_tick() -> None:
     The installation token is shared by every workflow in the repository, and
     40 queued groups each listing six workflows on their own would starve it.
     """
-    import re
-
     job = _readiness_job()
     (step,) = job["steps"]
     run = step["run"]

@@ -23,6 +23,7 @@ import PendingQuestionCard from './PendingQuestionCard'
 import QueueStack, { SubagentDeliveryProgress, splitPaneMessages } from './QueueStack'
 import SubagentProgressBar from '../pages/chat/SubagentProgressBar'
 import ChatFooter from '../pages/chat/ChatFooter'
+import { useEnvironmentStartLabel, useSlotRunsHere } from './sessionEnvironmentHooks'
 import PinnedPrompt from '../pages/chat/PinnedPrompt'
 import SessionTitleControl from '../pages/chat/SessionTitleControl'
 import { pinCandidateKey, usePinnedPrompt } from '../pages/chat/usePinnedPrompt'
@@ -68,6 +69,7 @@ import { useChatPaneSend } from './useChatPaneSend'
 import { useChatPaneStop, useChatPaneRunSync } from './useChatPaneTurnControl'
 import { useChatPaneContinue } from './useChatPaneContinue'
 import { useChatPaneRenderers, ChatPaneAboveRows } from './ChatPaneTranscript'
+import { slotRowByKey } from '../store/slotIndex'
 
 export type { PaneLeading } from './ChatPaneProps'
 
@@ -186,7 +188,8 @@ export default function ChatPane({
   // Prefer the warm's value: this pane's own query is staleTime:Infinity, so its
   // has_more freezes at mount while a later bounded warm can truncate the cache.
   const warmHasMore = useAppSelector((s) => s.chat.slotPaneHasMore?.[slotKey])
-  const paneSlot = useAppSelector((s) => s.dashboard.slots.find((x) => x.key === slotKey))
+  const paneSlot = useAppSelector((s) => slotRowByKey(s.dashboard.slots, slotKey))
+  const paneRunsHere = useSlotRunsHere(paneSlot && paneSlot.executor !== 'remote' ? paneSlot.key : null)
   // A stop is under way on this pane's turn: the stream state's own `stopping`
   // phase, or a Stop pressed from another tab that reaches this pane only as
   // the slots frame's `stopping` flag. This is the footer's and composer's
@@ -246,7 +249,7 @@ export default function ChatPane({
   // history key (dashboard:<slot>); strip the prefix to match the bare slot key.
   const parentKey = paneSlot?.forked_from ? paneSlot.forked_from.replace(/^dashboard:/, '') : null
   const parentSlot = useAppSelector((s) =>
-    parentKey ? s.dashboard.slots.find((x) => x.key === parentKey) : undefined,
+    parentKey ? slotRowByKey(s.dashboard.slots, parentKey) : undefined,
   )
   // An untitled parent reads "Untitled session", never its slot key; the tag's
   // hover keeps the key so two untitled parents stay tellable apart. A parent
@@ -346,6 +349,10 @@ export default function ChatPane({
   // The host declares the conversation surface; only the gateway decides
   // how to prioritize the human's message on the validated member DM.
   const composerBusyMode = crewmate ? 'responsive' : busyMode
+  // A reply on record means this session's environment connected before, so a
+  // later engine restart is a reconnect, not setup (see useEnvironmentStartLabel).
+  const paneHasReplied = useMemo(() => paneMessages.some(m => m.role === 'assistant'), [paneMessages])
+  const paneEnvironmentStart = useEnvironmentStartLabel(slotKey, !!paneSlot?.running, paneHasReplied)
   // The unfiltered rows, handed to the row set for the one read that must see
   // what the filter dropped (the steer-chip decision reads the policy-block
   // inject row). `undefined` for an ordinary chat, so its renderer set does not
@@ -543,7 +550,7 @@ export default function ChatPane({
   })
   const { recoverInto: recoverQuoteInto } = messageQuote
 
-  const { stopError, dismissStopError, paneStopState, onStop } = useChatPaneStop({ slotKey, busy: composerBusy, paneSlot, dispatch })
+  const { stopError, stopErrorDetail, dismissStopError, paneStopState, onStop } = useChatPaneStop({ slotKey, busy: composerBusy, paneSlot, dispatch })
   // The endpointer auto-submit (handed to the Voice atom above) is an Enter
   // press: the composer's default busy decision with this pane's own composer
   // inputs (never the flipped chord), so it steers where Send would steer.
@@ -856,6 +863,7 @@ export default function ChatPane({
                 )
                 : (
                   <ChatFooter
+                    statusLabel={paneEnvironmentStart}
                     running={running || !!paneSlot?.running || preparing}
                     stopping={stopUnderWay}
                     state={streamState}
@@ -993,7 +1001,9 @@ export default function ChatPane({
           variant="inline"
           className="mx-4 mt-2"
           testId="chat-pane-stop-error"
-          message={stopError}
+          title={stopErrorDetail ? stopError : undefined}
+          message={stopErrorDetail || stopError}
+          messagePlacement="below"
           onDismiss={dismissStopError}
         />
         {/* No hand-off: the composer draft is untouched by a refused Resume.
@@ -1037,7 +1047,11 @@ export default function ChatPane({
           value={input}
           onChange={handleUserInput}
           onSend={doSend}
-          terminalCommands={!paneSlot ? 'pending' : paneSlot.executor === 'remote' ? 'remote' : 'local'}
+          // A chat bound to a Session Environment runs in its workspace, so a `!`
+          // command would land on this machine instead: refused like a remote
+          // crew's, and held while that placement is still unread.
+          terminalCommands={!paneSlot ? 'pending' : paneSlot.executor === 'remote' || paneRunsHere === false ? 'remote'
+            : paneRunsHere === undefined ? 'pending' : 'local'}
           hiddenCommands={paneHiddenCommands}
           isRunning={composerBusy}
           onStop={onStop}
@@ -1064,6 +1078,7 @@ export default function ChatPane({
           jevAutoAvailable={jevAutoConsented && running}
           busyMode={composerBusyMode}
           autoFocusKey={slotKey}
+          environmentSlot={slotKey}
           agentName={paneAgentName}
           // The chip shows the inherited-default marker; `agentName` stays the
           // raw resolved alias for the skills query and switch title. Uses the

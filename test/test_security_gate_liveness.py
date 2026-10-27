@@ -522,12 +522,27 @@ def _url_payload_command(n: int) -> str:
 #: (owners, kits, revoked approvals, tool access, migration ledger), write-denied
 #: like the folder itself. Data, not rule logic: the matcher is unchanged.
 #:
-#: Raised by 927, from 32,613, for ``git_write``: the git write classifier
+#: Raised by 3, from 32,613, for the enterprise install-tree write fence in
+#: ``paths``: one import and one ``or`` clause on the write gate, plus the blank line
+#: isort puts after the import. The matcher lives outside the package
+#: (``kiro_crew.edition_install_fence``).
+#:
+#: Raised by 19, from 32,616, for the ``rm`` floor's own segment walk: reserved
+#: words (``then``, ``do``, ``!``, ``time`` …) keep command position, a quoted
+#: substitution may expand to nothing in the program word, and
+#: ``#`` / ``<<`` inside an unpaired ``${…}`` / ``$[…]`` open no comment or heredoc.
+#: Each command is read with and without that tracking. Deny-only: no allow widened.
+#:
+#: Raised by 8, from 32,635, for the ``rm`` floor's program word: an unquoted
+#: ``$x`` / ``${…}`` / ``$1`` there may be unset, so ``${x}rm`` is read as ``rm``.
+#: A word already read as ``rm`` keeps that reading. Deny-only: no allow widened.
+#:
+#: Raised by 927, from 32,643, for ``git_write``: the git write classifier
 #: the dashboard approval ladder asks before a trust, YOLO or pattern grant approves
 #: a shell call (``hooks.confirm_git_writes``), with its per-subcommand option
 #: allow-lists. A new confirm classifier, not a deny tier: no existing floor or
 #: pattern changed.
-_PACKAGE_LINE_BUDGET = 33_540
+_PACKAGE_LINE_BUDGET = 33_570
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second

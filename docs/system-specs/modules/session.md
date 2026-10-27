@@ -172,7 +172,8 @@ short fixed mate opener ("Welcome back, let me catch you up on where we
 are."), picked by the script of the user's request. It starts
 one tool-free background model call. The fingerprint covers the original
 genuine user request, conversation task rows, session ledger, and work ledger.
-The prompt casts the model as a manager reporting to the owner who hired it,
+The prompt names the facts the owner must come away with and lets the model
+pick tone and layout,
 worded to the user's `dashboard.verbosity` level. It returns one JSON object:
 `status` (`on_track`, `needs_you`, `blocked` or `done`; anything else reads as
 `needs_you` when `needs_you` has items, else `on_track`, and `on_track` or
@@ -180,6 +181,9 @@ worded to the user's `dashboard.verbosity` level. It returns one JSON object:
 240 characters), `asked` (160), `remaining` (160), `done` (at most four items
 of 120), `needs_you` and `next` (at most three items of 120 each), and `extra`
 (at most two `{title, items}` sections of three items, empty ones dropped).
+The prompt asks only for `status`, `headline`, `needs_you`, a free-form
+plain-text `body` (lines kept, 900 characters) and an optional `widget` (HTML,
+redacted, dropped whole over 6,000 characters); the other fields still parse.
 `headline` is required; an older `now` or `{"message"}` reply is read as it,
 and a missing `asked` falls back to the quoted original request. `progress`
 is never the model's: the gateway stores `{accepted, total}` counted over the
@@ -195,17 +199,19 @@ labelled plain text. The transcript draws `meta.brief` as a fixed card
 (`WarmBriefCard`) that renders every field as a plain text node, in the order
 status and headline, Needs you, Progress (an `accepted of total` bar only when
 `progress` exists, plus `remaining`), What you asked, Done, Next, then the
-`extra` sections. An older `meta.brief` (`asked`, `now`, `needs_you`, `next`)
-draws with `now` as the headline and no status chip; a row without a
+`extra` sections, with `body` after Progress and the `widget` last, in the
+sandboxed `WidgetFrame` chat widgets use. `content` never holds the widget.
+An older `meta.brief` (`asked`, `now`, `needs_you`, `next`) draws with `now` as the headline and no status chip; a row without a
 valid `meta.brief` keeps the ordinary bubble. The card is the body of the
 ordinary assistant bubble, so the row keeps its timestamp and row actions, and
 Copy takes the plain-text `content`; chat search reads the card's own visible
 text, so its count matches what can be highlighted. Only an assistant row draws it: any other
 role carrying the same `meta.kind` (the send route keeps client `meta` keys on
 the user row) draws as its own role. These generated rows
-are excluded from the task fingerprint. A new user turn, the owner leaving,
-slot replacement, reset, close, and a finished task drop a stale result
-unposted. Patrol turns, `[work-ledger wake]` rows, and worker reports change
+are excluded from the task fingerprint. A new user turn, slot replacement,
+reset, close, and a finished task drop a stale result unposted. The owner
+leaving drops the brief only before its opener is posted; after the opener,
+the result still posts as ordinary history while the owner is away. Patrol turns, `[work-ledger wake]` rows, and worker reports change
 the dedup fingerprint but do not make a prepared result stale; a turn running
 at publication defers the result until it ends. Only a live user row the person
 typed cancels a brief in preparation; assistant rows, automation rows and turn
@@ -364,6 +370,11 @@ Discovery of a same-named member cannot reinterpret an existing template session
 Resolved dispatch bindings use the canonical `default` name for Global memory,
 including when restored from a captured execution record. Equivalent aliases
 therefore compare equally without changing the selected conversation identity.
+A `template` record's provider template is dispatched exactly. A `member`
+record runs the crewmate conductor whenever the member's current `kiro_agent`
+binding owns a crewmate file, even when the record kept an older template; any
+other member runs its recorded template
+([crew-mode](crew-mode.md), `mate_worker.member_record_template`).
 
 Admission captures the record before asynchronous work and passes it directly to
 provider allocation and prompt construction. Automatic selection publication
@@ -548,7 +559,11 @@ background work. It is:
   `mc-discovery`, never raises) so the factory's synchronous, on-loop model lookup
   finds a warm snapshot and `_bg` is created on its agent's own pin rather than on
   `agent.model`; the lookup itself touches no file on the loop (see
-  `_resolve_named_agent_model` in `config.md`)
+  `_resolve_named_agent_model` in `config.md`). A start that fails is logged and
+  leaves no `_bg` session. When the refusal carries the `kiro_cli_missing` tag
+  (no Kiro CLI installed, the normal state right after a fresh install, which the
+  dashboard's Set up Kiro page handles) it is one warning line with the
+  refusal's message; any other failure is logged with its traceback
 - **Never expired** by idle cleanup (`_expire_idle` skips it)
 - **Serialized** by the per-session semaphore (one background task at a time)
   — applies to the **non-kiro** `_bg` path only; see "Multiplexed _bg runtime"
@@ -4843,6 +4858,20 @@ a trust root on its own; publication therefore also writes a
   each pass is capped at `_LEGACY_PID_BINDING_PRUNE_BUDGET` (2000) so a
   six-figure backlog drains over passes instead of monopolising one maintenance
   task.
+- **Transcript staging temps** (`SessionCleanup._sweep_session_staging_temps` →
+  `session_staging_sweep.sweep_session_staging_temps`): transcript writers stage
+  new content beside its target and rename it into place, and two staging names
+  land directly in `<data home>/sessions/`: `tmp<8>.tmp` (a `mkstemp` with no
+  prefix: the metadata-line edit in `history_projection` and the by-name
+  `atomic_write` path) and `.kc-incoming-<8>` (the session-store moves). A writer
+  killed between the stage and the rename runs no handler, so the temp, often a
+  full transcript copy, stays. The same periodic tick removes it, on the
+  maintenance executor, when all three hold: the name is exactly one of those two
+  `mkstemp` shapes, it is a regular file by `lstat` through a pinned directory (a
+  link is never followed), and it is unmodified for
+  `STAGING_TEMP_MIN_AGE_SECS` (1 h), far beyond any stage-to-rename window, so a
+  write in flight in any process is never touched. Only direct children of the
+  sessions directory are examined; `*.jsonl.lock` sentinels are left alone.
 - **Shell audit log cap** (`SessionCleanup._sweep_shell_audit_log` →
   `shell_audit_log.rotate_shell_audit_log`): the bundled `postToolUse` hook in
   `config/defaults.json` records every `execute_bash` call as ONE

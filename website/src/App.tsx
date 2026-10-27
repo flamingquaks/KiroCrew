@@ -51,6 +51,7 @@ import EmbedTabStrip from './components/EmbedTabStrip'
 // Dev-only layout-editor harness (RFC §7 PR 2). Lazy so it never weighs the main
 // bundle — it is a developer route, not a shipped surface.
 const LayoutEditorHarnessPage = lazy(() => import('./pages/LayoutEditorHarnessPage'))
+
 import UpdateModal from './components/UpdateModal'
 
 import ComputerUseLiveView from './components/ComputerUseLiveView'
@@ -66,13 +67,13 @@ import CrashReportNotice from './components/CrashReportNotice'
 import RemoteUpdateOffer from './components/RemoteUpdateOffer'
 import KiroSignInNoticeFallback from './components/KiroSignInNoticeFallback'
 import { ImportSessionOutcomeNotice } from './components/ImportSessionItem'
+import { FileMenuResultToastFrame } from './components/notifications/FileMenuResultToast'
 import BuiltinAppRoute from './apps/BuiltinAppRoute'
 import { MobileNavRailContext, MobileRosterBarContext, type MobileNavRailOptions } from './components/MobileNavRailContext'
 import ShortcutsModal from './components/ShortcutsModal'
 import QuickSearchSurface from './components/QuickSearchSurface'
 import ReportProblemModal from './components/ReportProblemModal'
 import KiroAccountModal from './components/KiroAccountModal'
-import UnscannedDownloadConfirmHost from './components/UnscannedDownloadConfirmHost'
 
 import { StartupVideo } from './shell/boot/startupVideo'
 import { i18nT } from './i18n/t'
@@ -528,6 +529,9 @@ export default function App() {
         the dashboard inside the local pane (below), where it hides with the
         local Crew. */}
     {(isPopout || isEmbed) && <ImportSessionOutcomeNotice />}
+    {/* Same rule for a file-menu action's result: the dashboard shows it in the
+        notification sheet's banner region, which these frames do not render. */}
+    {(isPopout || isEmbed) && <FileMenuResultToastFrame />}
     {isPopout ? (
       <Routes>
         <Route path="/popout/chat/:slug?" element={<ErrorBoundary><PopoutFrame /></ErrorBoundary>} />
@@ -923,8 +927,6 @@ export default function App() {
     )}
     </WsContext.Provider>
     {shortcutsOpen && <ShortcutsModal onClose={() => setShortcutsOpen(false)} />}
-    {/* Answers the "Too large to scan" question a file download asks. */}
-    <UnscannedDownloadConfirmHost />
     <QuickSearchSurface
       owners={slotOwners}
       open={commandPalette.open}

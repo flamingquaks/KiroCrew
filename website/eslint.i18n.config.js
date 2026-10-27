@@ -684,6 +684,12 @@ export default [
               // a shape UI copy takes — copy has spaces and capitals, which is what keeps
               // `['Save changes', 'Delete item']` reported.
               '^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$',
+              // The same snake_case identifier with a numeric version suffix: a
+              // versioned wire token such as the `fold_delta.1` socket capability the
+              // tab declares in `/api/ws?caps=` (hooks/websocket/foldWatch.ts). It is
+              // sent to the gateway, never rendered. Copy never ends in `.<digits>`
+              // after an underscore-joined lowercase word, so no prose matches.
+              '^[a-z][a-z0-9]*(?:_[a-z0-9]+)+\\.[0-9]+$',
               // A `KeyboardEvent.code` SIDE-SPECIFIC MODIFIER identifier, i.e.
               // `AltRight`, `ControlLeft`, `MetaRight`, `ShiftLeft`. These are DOM
               // protocol values: they are compared against `e.code` and never
@@ -1219,6 +1225,12 @@ export default [
               // `config.json`, not copy. Already exempt as an object property below; a
               // JSX attribute of the same name carries the same machine value.
               'path',
+              // The same dotted config path on the Settings* primitives
+              // (`configKey="session_environments.coder_url"`): the settings
+              // extractor reads it to deep-link the control, so it is a machine
+              // key. A section with an underscore escapes the dotted-token word
+              // shape, which is why the attribute itself is named here.
+              'configKey',
               'data-\\w+', 'aria-(hidden|live|orientation|current|haspopup)',
               'autoComplete', 'inputMode', 'enterKeyHint', 'spellCheck',
               'viewBox', 'xmlns', 'fill', 'stroke', 'd', 'points', 'transform',

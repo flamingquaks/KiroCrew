@@ -1,7 +1,7 @@
 """``class AcpSessionHandle``: the session handle's constructor, state, properties and members.
 
 The class body binds each member an owner module defines (``prompt = _sh_turn.prompt``) and
-keeps the constructor, the properties and the class default. ``_own_methods`` names each bound
+keeps the constructor, the properties and the class default. ``own_methods`` names each bound
 function after its class attribute. ``kiro_crew.acp.session_handle`` re-exports the class,
 which keeps that module as its ``__module__``: the facade is the import path callers, pickles
 and reprs name.
@@ -13,6 +13,7 @@ import asyncio
 from collections.abc import Callable
 from typing import Any
 
+from kiro_crew._facade_bindings import own_methods
 from kiro_crew.acp import kas_wire
 from kiro_crew.acp import session_handle_compaction as _sh_compaction
 from kiro_crew.acp import session_handle_dispatch as _sh_dispatch
@@ -46,6 +47,7 @@ from kiro_crew.acp.session_handle_watchdog import (
 from kiro_crew.acp.skill_reads import SkillReadTracker
 from kiro_crew.acp.types import (
     ACP_BACKENDS_STEER,
+    ACP_BACKENDS_STEER_RETRACT,
     ACP_BACKENDS_STEERING_REQUEST,
     AcpEvent,
     AcpPromptStats,
@@ -53,28 +55,28 @@ from kiro_crew.acp.types import (
 )
 from kiro_crew.recovery.ladder import InfraError
 
-_OWNER_PREFIX = "kiro_crew.acp.session_handle_"
+#: The owner modules whose functions ``AcpSessionHandle`` binds as its members, this
+#: shell included.
+_MEMBER_OWNERS = frozenset(
+    {
+        "kiro_crew.acp.session_handle_class",
+        "kiro_crew.acp.session_handle_compaction",
+        "kiro_crew.acp.session_handle_dispatch",
+        "kiro_crew.acp.session_handle_elicitation",
+        "kiro_crew.acp.session_handle_kas",
+        "kiro_crew.acp.session_handle_lifecycle",
+        "kiro_crew.acp.session_handle_mcp",
+        "kiro_crew.acp.session_handle_model_selection",
+        "kiro_crew.acp.session_handle_native_children",
+        "kiro_crew.acp.session_handle_permissions",
+        "kiro_crew.acp.session_handle_steering",
+        "kiro_crew.acp.session_handle_turn",
+        "kiro_crew.acp.session_handle_updates",
+        "kiro_crew.acp.session_handle_watchdog",
+    }
+)
 
 
-def _own_methods(cls: type) -> type:
-    """Make each member *cls* binds from an owner module read as a method of *cls*.
-
-    A bound function annotates ``self`` so mypy checks its body as a method body;
-    this drops that annotation from the runtime object and names the function after
-    the class attribute (``AcpSessionHandle._run_turn``), so its ``inspect.signature``
-    and ``__qualname__`` are what the one-module class had, and so are the reprs of
-    the coroutines and tasks it starts. Only ``__module__`` moves: it names the owner
-    module that holds the body.
-    """
-    for name, member in vars(cls).items():
-        function = getattr(member, "__func__", member)
-        if getattr(function, "__module__", "").startswith(_OWNER_PREFIX):
-            function.__annotations__.pop("self", None)
-            function.__qualname__ = f"{cls.__qualname__}.{name}"
-    return cls
-
-
-@_own_methods
 class AcpSessionHandle:
     """Handle for a single ACP session on a shared runtime.
 
@@ -160,6 +162,7 @@ class AcpSessionHandle:
     _sync_effort_levels = _sh_models._sync_effort_levels
     # Steering a live turn: ``kiro_crew.acp.session_handle_steering``.
     steer = _sh_steering.steer
+    clear_pending_steers = _sh_steering.clear_pending_steers
     _steer_via_steering_request = _sh_steering._steer_via_steering_request
     _settle_abandoned_steering = _sh_steering._settle_abandoned_steering
     _take_injected_steers = _sh_steering._take_injected_steers
@@ -648,6 +651,13 @@ class AcpSessionHandle:
         # State tracking (populated from session/new response via store_session_config)
         self._model: str = ""
         self.active_agent: str = ""
+        # The vault identity fingerprint read as THIS session's ``session/new``
+        # or ``session/load`` went out (``kas_model_catalog.request_vault_identity``);
+        # ``""`` on a handle whose request was never stamped, which records
+        # nothing. The KAS catalog recorder keeps it with the response's
+        # ``model`` select: the engine answers for the account in the vault when
+        # it was asked, and the picker serves the rows only to that account.
+        self.request_vault_identity: str = ""
         # Model id kiro-cli RESOLVED the session to (from currentModelId in the
         # session/new|load response), kept separate from _model (the user-picked
         # alias) so it feeds ONLY the context-window backfill — never slot.model
@@ -798,6 +808,10 @@ class AcpSessionHandle:
     # mixing the two clocks is how a suspend-resume silently reorders them.
     _last_steer_monotonic: float = 0.0
 
+    # Set once kiro-cli refuses ``_session/steer/clear`` (a build without it), so
+    # the session stops offering a pending steer back. See ``clear_pending_steers``.
+    _steer_clear_refused: bool = False
+
     @property
     def last_steer_monotonic(self) -> float:
         """Monotonic time of the last steer written to the backend (0.0 if none)."""
@@ -819,6 +833,19 @@ class AcpSessionHandle:
         """
         backend = self._runtime.acp_backend
         return backend in ACP_BACKENDS_STEER or backend in ACP_BACKENDS_STEERING_REQUEST
+
+    @property
+    def supports_steer_retract(self) -> bool:
+        """True when a steer this session has not read yet can be taken back.
+
+        Membership in ``ACP_BACKENDS_STEER_RETRACT``, read from the runtime's own
+        backend id, and False once the host refused the request
+        (:meth:`clear_pending_steers`), so a build without it is not offered again.
+        """
+        return (
+            self._runtime.acp_backend in ACP_BACKENDS_STEER_RETRACT
+            and not self._steer_clear_refused
+        )
 
     @property
     def supports_refusal_steer(self) -> bool:
@@ -967,3 +994,6 @@ class AcpSessionHandle:
         de-duplicating an id means remembering it, which is the one thing the
         cap exists to refuse."""
         return self._native_child_overflow
+
+
+own_methods(AcpSessionHandle, _MEMBER_OWNERS)
