@@ -917,3 +917,31 @@ def test_transport_options_footer_cancellation_books_failure(monkeypatch):
         sessions.calls["success"] == 0
     ), "booked success for an OPTIONS turn whose choices never delivered"
     assert sessions.calls["failure"] == 1
+
+
+class _CancelledMidAnswerProvider(ScriptedProvider):
+    """Writes part of an answer, then the turn task is cancelled (``!stop``)."""
+
+    async def stream(self, message: str):
+        self.stream_calls += 1
+        yield make_event(EVENT_TEXT_CHUNK, text="The first half of the answer.")
+        raise asyncio.CancelledError()
+
+
+def test_a_cancelled_turn_still_shows_the_text_it_was_holding(monkeypatch):
+    # The renderer holds the reply until the turn ends, and a cancelled turn
+    # never reaches ``on_done``. What the model wrote goes out before the
+    # cancellation propagates, as it did when it streamed live.
+    slack = RecordingSlackClient()
+    sessions = _VerdictSessions(_CancelledMidAnswerProvider([]))
+
+    with pytest.raises(asyncio.CancelledError):
+        _run_verdict_turn(monkeypatch, slack, sessions)
+
+    shown = " ".join(
+        p.get("text", "") for m, p in slack.transcript if m in ("append_stream", "update_message")
+    )
+    # Everything the driver released; its redactor's last held run ("answer.")
+    # dies with the driver, on this path as on the exception path.
+    assert "The first half of the" in shown, slack.transcript
+    assert sessions.calls["failure"] == 1
