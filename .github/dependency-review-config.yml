@@ -1,5 +1,6 @@
 # Dependency License Gate — configuration
-# Consumed by .github/workflows/dependency-review.yml (actions/dependency-review-action).
+# Consumed by the Dependency License Gate step of .github/workflows/pr-policy.yml
+# (actions/dependency-review-action).
 #
 # MODEL: default-deny. Only the SPDX licenses in `allow-licenses` below are
 # permitted on any dependency ADDED or CHANGED by a PR. Everything else fails

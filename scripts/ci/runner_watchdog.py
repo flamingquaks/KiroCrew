@@ -239,18 +239,15 @@ WATCHED_WORKFLOWS: tuple[str, ...] = (
     "build.yml",
     "ci.yml",
     "code-review.yml",
-    "cross-platform.yml",
-    "dependency-review.yml",
     "dependency-vulnerability.yml",
     "fast-gate.yml",
     "macos-on-demand.yml",
     "main-ratchet-audit.yml",
     "pages.yml",
     "pr-merge-conflict-label.yml",
+    "pr-policy.yml",
     "pr-readiness.yml",
-    "pr-scope.yml",
     "release.yml",
-    "screenshot-evidence.yml",
     "sensitive-change-review.yml",
 )
 # Put the workflows that carry routine pull-request traffic ahead of release
@@ -323,10 +320,7 @@ HEAL_SAFE_WORKFLOWS: frozenset[str] = frozenset(
 HEAL_SAFE_PULL_REQUEST_WORKFLOWS: frozenset[str] = frozenset(
     {
         "code-review.yml",
-        "cross-platform.yml",
-        "dependency-review.yml",
-        "pr-scope.yml",
-        "screenshot-evidence.yml",
+        "pr-policy.yml",
     }
 )
 _PUBLISH_OR_DEPLOY_PATTERNS: tuple[re.Pattern[str], ...] = tuple(

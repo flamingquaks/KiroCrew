@@ -163,10 +163,9 @@ _EXPECTED_ROUTED_JOBS = {
     ("release.yml", "record-promotion"),
     ("pages.yml", "build"),
     ("pages.yml", "deploy"),
-    ("cross-platform.yml", "cross-platform"),
-    ("dependency-review.yml", "license-gate"),
-    ("pr-scope.yml", "pr-scope"),
-    ("screenshot-evidence.yml", "screenshot-evidence"),
+    # PR Size, PR Scope, Cross-Platform Portability, Dependency License Gate and
+    # Screenshot Evidence: five policies, one job, one fleet route.
+    ("pr-policy.yml", "pr-policy"),
     ("macos-on-demand.yml", "decide"),
     ("ci.yml", "changes"),
     ("ci.yml", "await-fast-gate"),
