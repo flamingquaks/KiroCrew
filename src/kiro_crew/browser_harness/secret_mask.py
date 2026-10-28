@@ -77,17 +77,25 @@ def _variants(value: str) -> set[str]:
 
 
 def hold(session_key: str, ask: Any, values: dict[str, str], *, now: float | None = None) -> None:
-    """Keep a copy of the values *ask* is about to type, for :data:`HOLD_S`."""
-    _HELD.pop(session_key, None)
+    """Keep a copy of the values *ask* is about to type, for :data:`HOLD_S`.
+
+    A copy already held for the same origin is kept and joined (a sign-in, then
+    its one-time code), so the username stays masked through the second step.
+    """
     roles = _HELD_ROLES.get(ask.spec.kind, ())
     kept = tuple(v for r in roles if isinstance(v := values.get(r), str) and v.strip())
     if not kept:
         return
+    origin = ask.top_origin or ask.origin
+    framed = ask.origin != origin
+    start = time.monotonic() if now is None else now
+    before = live(session_key, now=start)
+    if before is not None and before.origin == origin:
+        kept = tuple(dict.fromkeys(before.values + kept))
+        framed = framed or before.framed
     forms = sorted({f for v in kept for f in _variants(v)}, key=len, reverse=True)
     pattern = re.compile("|".join(_word(f) for f in forms), re.IGNORECASE)
-    origin = ask.top_origin or ask.origin
-    start = time.monotonic() if now is None else now
-    _HELD[session_key] = Held(kept, origin, ask.origin != origin, start + HOLD_S, pattern)
+    _HELD[session_key] = Held(kept, origin, framed, start + HOLD_S, pattern)
 
 
 def _word(form: str) -> str:
@@ -209,6 +217,23 @@ _BOXES_JS = """(function (vals, origin, MIN) {
 })"""
 
 _WORLD = "kirocrew_secret_mask"
+#: The isolated world's context id per CDP session (one tab each).
+_WORLDS: dict[str, int] = {}
+
+
+async def _world(relay: Any, session_id: str) -> int:
+    tree = await relay.send("Page.getFrameTree", {}, session_id)
+    frame_id = ((tree or {}).get("frameTree") or {}).get("frame", {}).get("id")
+    made = await relay.send(
+        "Page.createIsolatedWorld",
+        {"frameId": frame_id, "worldName": _WORLD, "grantUniveralAccess": False},
+        session_id,
+    )
+    ctx_id = made["executionContextId"]
+    if not isinstance(ctx_id, int):
+        raise TypeError("no context")
+    _WORLDS[session_id] = ctx_id
+    return ctx_id
 
 
 @dataclass(frozen=True)
@@ -224,30 +249,33 @@ async def value_boxes(relay: Any, session_id: str, session_key: str) -> Boxes | 
 
     No copy held: no boxes. The top frame on another origin: the copy is dropped
     and this answer is ``None``: a frame captured just before that navigation can
-    still show a value, so the new page's empty answer must not let it through. A frame it cannot read counts only for an ask that was
-    itself inside a frame (its values live there): its whole box is painted.
+    still show a value, so the new page's empty answer must not let it through. A
+    frame it cannot read counts only for an ask that was itself inside a frame (its values live there): its whole box is painted.
     """
     held = live(session_key)
     if held is None:
         return Boxes([], 0.0, (0.0, 0.0))
-    try:
-        tree = await relay.send("Page.getFrameTree", {}, session_id)
-        frame_id = ((tree or {}).get("frameTree") or {}).get("frame", {}).get("id")
-        made = await relay.send(
-            "Page.createIsolatedWorld",
-            {"frameId": frame_id, "worldName": _WORLD, "grantUniveralAccess": False},
-            session_id,
-        )
-        vals = json.dumps([v.lower() for v in held.values])
-        expr = f"{_BOXES_JS}({vals}, {json.dumps(held.origin)}, {MIN_LEN})"
-        reply = await relay.send(
-            "Runtime.evaluate",
-            {"expression": expr, "contextId": made["executionContextId"], "returnByValue": True},
-            session_id,
-        )
-    except Exception:  # noqa: BLE001 - unknown, never "nothing drawn"; the error carries no value
-        logger.debug("secret mask: box query failed")
-        return None
+    vals = json.dumps([v.lower() for v in held.values])
+    expr = f"{_BOXES_JS}({vals}, {json.dumps(held.origin)}, {MIN_LEN})"
+    reply = None
+    # One isolated world per session, reused (the replay asks up to 5 times a
+    # second); a navigation destroys it, and the query then makes a fresh one.
+    for fresh in (False, True):
+        try:
+            ctx_id = _WORLDS.get(session_id) if not fresh else None
+            if ctx_id is None:
+                ctx_id = await _world(relay, session_id)
+            reply = await relay.send(
+                "Runtime.evaluate",
+                {"expression": expr, "contextId": ctx_id, "returnByValue": True},
+                session_id,
+            )
+            break
+        except Exception:  # noqa: BLE001 - unknown, never "nothing drawn"; carries no value
+            _WORLDS.pop(session_id, None)
+            if fresh:
+                logger.debug("secret mask: box query failed")
+                return None
     value = ((reply or {}).get("result") or {}).get("value")
     if not isinstance(value, dict) or (reply or {}).get("exceptionDetails"):
         return None

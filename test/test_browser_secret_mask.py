@@ -31,8 +31,10 @@ EMAIL = "Octo.Cat@example.com"
 @pytest.fixture(autouse=True)
 def _clean() -> Any:
     sm._HELD.clear()
+    sm._WORLDS.clear()
     yield
     sm._HELD.clear()
+    sm._WORLDS.clear()
 
 
 def _ask(kind: str = "credentials", origin: str = "https://login.example.com", top: str = ""):
@@ -93,11 +95,14 @@ def test_the_copy_runs_out_and_is_dropped_on_another_origin() -> None:
     assert sm.redact(KEY, PASSWORD) == PASSWORD  # nothing held, nothing to mask
 
 
-def test_a_new_answer_replaces_the_copy() -> None:
+def test_a_second_step_on_the_origin_joins_the_copy_and_another_origin_replaces_it() -> None:
     _hold()
-    sm.hold(KEY, _ask("otp"), {"otp": "123456"})
-    assert sm.redact(KEY, PASSWORD) == PASSWORD
-    assert sm.redact("chat-2", "123456") == "123456"  # per session
+    sm.hold(KEY, _ask("otp"), {"otp": "123456"})  # the sign-in's one-time code
+    sm.hold(KEY, _ask("text"), {"text": "Alice"})  # holds nothing, drops nothing
+    assert sm.redact(KEY, f"{EMAIL} {PASSWORD} 123456") == f"{sm.MASK} {sm.MASK} {sm.MASK}"
+    sm.hold(KEY, _ask("otp", origin="https://other.example.net"), {"otp": "654321"})
+    assert sm.redact(KEY, f"{PASSWORD} 654321") == f"{PASSWORD} {sm.MASK}"
+    assert sm.redact("chat-2", "654321") == "654321"  # per session
 
 
 # ── the op exits ────────────────────────────────────────────────────────────
@@ -263,7 +268,9 @@ async def test_the_replay_paints_the_value_boxes_and_the_card_does_not() -> None
     _w, _h, boxes, ok = sink.recorded[0]
     assert ok and [100, 100, 51, 21] in boxes
     assert sink.frames[0]["mask"] == [[0, 0, 11, 11]]  # the person's view: password boxes only
-    relay.fail.add("Page.createIsolatedWorld")
+    relay.answers["Runtime.evaluate"] = lambda: (
+        {"result": {"value": None}} if "contextId" in relay.calls[-1][1] else evaluate()
+    )
     await relay.on_event(frame_event(jpeg((1, 1, 1), size=(1280, 800))))
     assert sink.recorded[-1][3] is False  # unknown value boxes: the frame is not kept
 
@@ -281,6 +288,19 @@ async def test_the_replay_events_reach_disk_masked(tmp_path: Path) -> None:
     assert b"octo.cat" not in data and b"click" in data
 
 
+@pytest.mark.asyncio
+async def test_the_isolated_world_is_reused_and_remade_after_a_navigation() -> None:
+    _hold()
+    relay = _BoxRelay([], vw=100)
+    assert await sm.value_boxes(relay, "S1", KEY) is not None
+    assert await sm.value_boxes(relay, "S1", KEY) is not None
+    worlds = [c for c in relay.calls if c[0] == "Page.createIsolatedWorld"]
+    assert len(worlds) == 1
+    relay.stale_once = True  # the page navigated: the old context is gone
+    assert await sm.value_boxes(relay, "S1", KEY) is not None
+    assert len([c for c in relay.calls if c[0] == "Page.createIsolatedWorld"]) == 2
+
+
 class _BoxRelay:
     """Answers the mask's three CDP calls with fixed boxes."""
 
@@ -290,6 +310,7 @@ class _BoxRelay:
         self.expressions: list[str] = []
         self.fail = self.gone = self.partial = False
         self.scrolls: list[tuple[int, int]] = []
+        self.stale_once = False
 
     async def send(self, method: str, params: dict[str, Any], session_id: str) -> Any:
         self.calls.append((method, params, session_id))
@@ -303,6 +324,9 @@ class _BoxRelay:
             out = io.BytesIO()
             Image.new("RGB", (200, 100), (255, 255, 255)).save(out, format="PNG")
             return {"data": base64.b64encode(out.getvalue()).decode()}
+        if self.stale_once:
+            self.stale_once = False
+            raise RuntimeError("Cannot find context with specified id")
         self.expressions.append(params["expression"])
         if self.gone:
             return {"result": {"value": {"gone": True}}}

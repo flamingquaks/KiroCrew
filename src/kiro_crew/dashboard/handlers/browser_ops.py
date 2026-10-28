@@ -637,7 +637,9 @@ async def _fenced_op(
         return {"ok": False, "code": "timeout", "error": f"{op} ran past {budget:g}s"}
     except Exception as exc:  # noqa: BLE001 - a helper or the daemon raised
         # A helper's error can quote the page: masked like any page read.
-        error = secret_mask.redact(key, _safe(exc))
+        # Masked before it is cut, so no prefix of a value survives the cut.
+        lines = secret_mask.redact(key, str(exc)).strip().splitlines()
+        error = (lines[0] if lines else type(exc).__name__)[:300]
         logger.warning("browser op %s failed: %s", op, error)
         _audit(request, "error", type(exc).__name__)
         return {"ok": False, "code": "browser_error", "error": error}
