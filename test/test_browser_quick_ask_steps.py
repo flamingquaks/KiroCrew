@@ -356,6 +356,25 @@ async def test_a_sign_in_iframe_binds_its_origin_and_is_walked_through_its_sessi
     assert focus_sids == {CHILD}
 
 
+async def test_a_same_process_sign_in_frame_is_walked_and_enrolled_for_the_guards() -> None:
+    """idmsa.apple.com in store.apple.com: same site, so no child session. The walk
+    finds and fills it through the top session, and the frame is enrolled first so
+    the screenshot and typing guards count its filled fields."""
+    page = LoginPage()
+    page.frame.update(url="https://store.example.com/checkout")
+    page.add_frame("F2", "https://id.example.com/signin", pierce=True)
+    user, password = _two_step(page, frame="F2")
+    hub, _rec, ask = await _ask(page, oopif=True)
+    wire = lh.live_event(hub.get(KEY))["ask"]  # type: ignore[arg-type]
+    assert (wire["origin"], wire["steps"]) == ("https://id.example.com", {"username": "required"})
+    reg = hub.get(KEY).stream.frames  # type: ignore[union-attr]
+    assert reg.local == set()
+    status, out, _ = await _answer(_fill(ask, username=EMAIL, password=CANARY))
+    assert (status, out["outcome"]) == (200, "submitted")
+    assert page.inserts == [(user, EMAIL), (password, CANARY)]
+    assert reg.local == {"F2"}
+
+
 async def test_a_password_box_in_another_origins_frame_is_never_typed_into() -> None:
     page = LoginPage()
     _store_with_frames(page)

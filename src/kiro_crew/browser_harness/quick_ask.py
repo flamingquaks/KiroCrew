@@ -664,14 +664,16 @@ class PageProbe:
             raise AskError("frame_transformed")
         return at
 
-    async def node_at(self, x: float, y: float) -> int:
-        """The ``backendNodeId`` drawn topmost at (x, y), ``pointer-events: none`` included."""
+    async def node_at(self, x: float, y: float) -> tuple[int, str]:
+        """``(backendNodeId, frameId)`` drawn topmost at (x, y), ``pointer-events: none``
+        included. A frame in this tab's own process is hit-tested through: the
+        node is the one inside it, and ``frameId`` names that frame."""
         found = await self._send(
             "DOM.getNodeForLocation",
             {"x": int(x), "y": int(y), "ignorePointerEventsNone": True},
         )
-        node = found.get("backendNodeId")
-        return node if isinstance(node, int) else 0
+        node, frame_id = found.get("backendNodeId"), found.get("frameId")
+        return (node if isinstance(node, int) else 0, frame_id if isinstance(frame_id, str) else "")
 
     async def evaluate(self, ctx: int, expression: str) -> Any:
         out = await self._send(
@@ -692,13 +694,19 @@ class PageProbe:
             raise AskError("cdp_failed")
         return ctx
 
-    async def ref_node(self, ref: str) -> int:
-        """The ``backendNodeId`` a snapshot ref names, or :class:`AskError` ``ref_stale``."""
+    async def ref_node(self, ref: str, ctx: int | None = None) -> int:
+        """The ``backendNodeId`` a snapshot ref names, or :class:`AskError` ``ref_stale``.
+
+        *ctx*: the walker's world of a same-process frame (``frames.WALKER_WORLD``),
+        else this session's page world."""
         expr = (
             "(window.__kcRefDocObj === document && window.__kcRefs instanceof Map)"
             f" ? (window.__kcRefs.get({ref!r}) || null) : null"
         )
-        found = await self._send("Runtime.evaluate", {"expression": expr, "returnByValue": False})
+        params: dict[str, Any] = {"expression": expr, "returnByValue": False}
+        if ctx is not None:
+            params["contextId"] = ctx
+        found = await self._send("Runtime.evaluate", params)
         obj = (found.get("result") or {}).get("objectId")
         if not obj:
             raise AskError("ref_stale")
@@ -854,20 +862,30 @@ async def _locate(top: PageProbe, frames: Any, ref: str) -> tuple[PageProbe, int
     """``(probe, backendNodeId, frame_id)`` for one target ref; ``frame_id`` ``""`` = top.
 
     ``f<tag>eN`` names an element of a cross-origin frame: its probe is that
-    frame's child session. ``eN`` is in the top map: the top document's, or a
-    same-origin frame's, on the stream's own session.
+    frame's child session, or for a same-process frame the stream's own session,
+    looked up in that frame's walker world. ``eN`` is in the top map: the top
+    document's, or a same-origin frame's, on the stream's own session.
     """
-    from kiro_crew.browser_harness.frames import split_frame_ref
+    from kiro_crew.browser_harness.frames import WALKER_WORLD, split_frame_ref
 
     framed = split_frame_ref(ref)
     if framed is not None:
         tag, local = framed
         frame_id = frames.frame_of(tag) if frames is not None else ""
         sid = frames.session_of(frame_id) if frame_id else ""
-        if not sid:
+        if sid:
+            probe = PageProbe(top.relay, sid)
+            return probe, await probe.ref_node(local), frame_id
+        if not frame_id or frame_id not in getattr(frames, "local", ()):
             raise AskError("ref_stale")
-        probe = PageProbe(top.relay, sid)
-        return probe, await probe.ref_node(local), frame_id
+        made = await top._send(
+            "Page.createIsolatedWorld",
+            {"frameId": frame_id, "worldName": WALKER_WORLD, "grantUniveralAccess": False},
+        )
+        ctx = made.get("executionContextId")
+        if not isinstance(ctx, int):
+            raise AskError("ref_stale")
+        return top, await top.ref_node(local, ctx), frame_id
     node = await top.ref_node(ref)
     return top, node, await top.ref_frame(ref)
 
@@ -883,6 +901,7 @@ async def _check_frame(
     top: PageProbe,
     top_ctx: int,
     owner: int,
+    frame_id: str,
     rects: list[tuple[float, float, float, float]],
     frame_width: float,
     frame_height: float,
@@ -905,8 +924,13 @@ async def _check_frame(
         if await top.call(owner, top_ctx, _HIT_JS, px, py) is not True:
             raise AskError("covered")
         # elementFromPoint skips a decoy with pointer-events: none laid over the
-        # frame; the browser's own hit test, told not to, does not.
-        if await top.node_at(px, py) != owner:
+        # frame; the browser's own hit test, told not to, does not. An
+        # out-of-process frame answers its owner; a frame in the tab's own process
+        # (same site, another origin: idmsa.apple.com in store.apple.com) answers
+        # a node inside it, so the frame it names must be this one. A decoy in
+        # the top document or in any other frame names another frame.
+        node, hit_frame = await top.node_at(px, py)
+        if node != owner and not (node and frame_id and hit_frame == frame_id):
             raise AskError("covered")
     return at, float(info.get("vw") or 0), float(info.get("vh") or 0)
 
@@ -979,7 +1003,9 @@ async def bind_ask(probe: PageProbe, spec: AskSpec, scale: float, frames: Any = 
     offset = (0.0, 0.0)
     if frame_id != top_id:
         owner = await top.frame_owner(frame_id)
-        offset, vw, vh = await _check_frame(top, top_ctx, owner, [b.rect for b in bindings], vw, vh)
+        offset, vw, vh = await _check_frame(
+            top, top_ctx, owner, frame_id, [b.rect for b in bindings], vw, vh
+        )
     return QuickAsk(
         spec=spec,
         origin=origin,
@@ -1061,6 +1087,10 @@ class _Login:
     action: int = 0
     rects: dict[str, tuple[float, float, float, float]] = field(default_factory=dict)
     offset: tuple[float, float] = (0.0, 0.0)
+    #: The frame these fields are in, and whether it is an iframe in the tab's own
+    #: process (read through the top session, not a child session of its own).
+    frame_id: str = ""
+    same_process: bool = False
 
 
 async def _login_frames(top: PageProbe, top_id: str, frames: Any) -> list[tuple[PageProbe, str]]:
@@ -1108,7 +1138,13 @@ async def _find_login(
                 continue
             if frame_id != top_id:
                 ctx = await fprobe.world(frame_id)
-            login = _Login(probe=fprobe, ctx=ctx, origin=f_origin)
+            login = _Login(
+                probe=fprobe,
+                ctx=ctx,
+                origin=f_origin,
+                frame_id=frame_id,
+                same_process=frame_id != top_id and fprobe.session_id == top.session_id,
+            )
             vw = vh = 0.0
             for role in ("password", "username", "action"):
                 node = await fprobe.find(ctx, role)
@@ -1126,7 +1162,7 @@ async def _find_login(
             if frame_id != top_id:
                 owner = await top.frame_owner(frame_id)
                 login.offset, _vw, _vh = await _check_frame(
-                    top, top_ctx, owner, list(login.rects.values()), vw, vh
+                    top, top_ctx, owner, frame_id, list(login.rects.values()), vw, vh
                 )
             return login
         except AskError as exc:
@@ -1139,6 +1175,16 @@ async def _find_login(
 def _spent(ask: QuickAsk) -> bool:
     """The ask ended or ran out: the walk types nothing more."""
     return bool(ask.outcome) or asyncio.get_running_loop().time() >= ask.deadline
+
+
+def _enroll(frames: Any, login: _Login) -> None:
+    """Before a write into a same-process cross-origin frame, have the frame guards
+    (``FrameOps.count``: the screenshot and typing guards) look into it too: the top
+    document's walker cannot, and no snapshot may have read it yet."""
+    if login.same_process and login.frame_id and frames is not None:
+        local = getattr(frames, "local", None)
+        if isinstance(local, set):
+            local.add(login.frame_id)
 
 
 async def _write(ask: QuickAsk, login: _Login, node: int, value: str) -> None:
@@ -1198,6 +1244,8 @@ async def sign_in(
             if exc.code == ORIGIN_CHANGED:
                 raise
             login = None  # a read that failed mid-navigation: look again
+        if login is not None and (login.password or (login.user and not user_done)):
+            _enroll(frames, login)
         if login is not None and login.password:
             if login.user and not user_done:
                 await _write(ask, login, login.user, user)  # type: ignore[arg-type]
@@ -1260,8 +1308,8 @@ async def _recheck(top: PageProbe, ask: QuickAsk) -> tuple[PageProbe, int, list[
             rects = [tuple(float(v) for v in i["rect"]) for i in infos]
             width = float(infos[0].get("vw") or 0) if infos else 0.0
             height = float(infos[0].get("vh") or 0) if infos else 0.0
-            ask.offset, _vw, _vh = await _check_frame(  # type: ignore[arg-type]
-                top, top_ctx, ask.owner, rects, width, height
+            ask.offset, _vw, _vh = await _check_frame(
+                top, top_ctx, ask.owner, ask.frame_id, rects, width, height  # type: ignore[arg-type]
             )
     except AskError as exc:
         raise AskError(ORIGIN_CHANGED) from exc.__cause__

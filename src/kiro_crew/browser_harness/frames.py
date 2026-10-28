@@ -18,8 +18,14 @@ the child sessions private, ``relay.CdpRelay._track_child``). Through it the gat
   so the agent's ``type``/``press_key``/``screenshot`` guards hold inside it too.
 
 Same-origin iframes need none of this: the walker walks into them in place.
-Only OOPIFs whose session hangs directly off the tab are read; one nested in
-another OOPIF stays a ``slot`` the outline marks as not read.
+A cross-origin iframe of the SAME SITE (``idmsa.apple.com`` in ``store.apple.com``,
+``secure.soundcloud.com`` in ``soundcloud.com``) is no OOPIF: Chrome keeps it in the
+tab's own process, so no child session ever attaches. Such a frame, directly under
+the top frame, is read through the stream's own session instead, in a fixed
+isolated world of that frame (:data:`WALKER_WORLD`; Chrome hands back the same
+world for the same name until the frame's document changes, so its refs live as
+long as that document). Only frames directly under the tab are read; one nested
+deeper stays a ``slot`` the outline marks as not read.
 """
 
 from __future__ import annotations
@@ -35,6 +41,8 @@ logger = logging.getLogger(__name__)
 FRAME_REF_RE = re.compile(r"^f([1-9][0-9]{0,3})(e[1-9][0-9]{0,6})$")
 #: Most cross-origin frames one snapshot reads (the walker hands out as many slots).
 FRAME_READ_CAP = 8
+#: The isolated world a same-process cross-origin frame's walker runs in.
+WALKER_WORLD = "kirocrew_frame_walker"
 #: How far the owner's box may differ from the frame's own viewport, in CSS
 #: pixels, before the frame counts as scaled (its points would land elsewhere).
 SCALE_TOLERANCE_PX = 1.5
@@ -59,6 +67,9 @@ class FrameRegistry:
     def __init__(self) -> None:
         self.parent = ""
         self._session: dict[str, str] = {}
+        #: Same-process cross-origin frames directly under the tab, read through
+        #: the stream's own session (:meth:`FrameOps.adopt`).
+        self.local: set[str] = set()
         self._tags: dict[str, int] = {}
         self._by_tag: dict[int, str] = {}
 
@@ -122,19 +133,69 @@ class FrameOps:
         reply = await self.relay.send(method, params, sid)
         return reply if isinstance(reply, dict) else {}
 
-    async def _eval(self, sid: str, expression: str) -> Any:
-        out = await self._send(
-            "Runtime.evaluate", {"expression": expression, "returnByValue": True}, sid
-        )
+    async def _eval(self, where: tuple[str, int | None], expression: str) -> Any:
+        """Evaluate in *where*: ``(session, None)`` is that session's page world,
+        ``(top session, context id)`` a same-process frame's walker world."""
+        sid, ctx = where
+        params: dict[str, Any] = {"expression": expression, "returnByValue": True}
+        if ctx is not None:
+            params["contextId"] = ctx
+        out = await self._send("Runtime.evaluate", params, sid)
         if out.get("exceptionDetails"):
             return None
         return (out.get("result") or {}).get("value")
 
-    async def _walker(self, sid: str, method: str, *args: Any) -> Any:
+    async def _walker(self, where: tuple[str, int | None], method: str, *args: Any) -> Any:
         rendered = ", ".join(json.dumps(a) for a in args)
-        return await self._eval(sid, f"{self.walker}.{method}({rendered})")
+        return await self._eval(where, f"{self.walker}.{method}({rendered})")
 
-    async def owner_origin_box(self, frame_id: str, sid: str) -> tuple[float, float] | None:
+    async def _children(self) -> dict[str, str]:
+        """``{frame id: url}`` of the frames directly under the tab's top frame."""
+        tree = await self._send("Page.getFrameTree", {}, self.top)
+        out: dict[str, str] = {}
+        for child in (tree.get("frameTree") or {}).get("childFrames") or []:
+            frame = child.get("frame") or {}
+            if isinstance(frame.get("id"), str):
+                out[frame["id"]] = str(frame.get("url") or "")
+        return out
+
+    async def adopt(self, frame_id: str) -> bool:
+        """Read *frame_id* through the top session: only a frame directly under the
+        tab that no child session holds (a same-process cross-origin frame)."""
+        if not frame_id or self.registry.session_of(frame_id):
+            return False
+        if frame_id not in await self._children():
+            return False
+        self.registry.local.add(frame_id)
+        return True
+
+    async def where(self, frame_id: str) -> tuple[str, int | None] | None:
+        """Where *frame_id*'s walker runs, or ``None`` when it cannot be read now.
+
+        A same-process frame that left the tree is forgotten here, so a guard
+        counting frames stops counting it as unreadable."""
+        sid = self.registry.session_of(frame_id) if frame_id else ""
+        if sid:
+            return sid, None
+        if frame_id not in self.registry.local:
+            return None
+        try:
+            if frame_id not in await self._children():
+                self.registry.local.discard(frame_id)
+                return None
+            made = await self._send(
+                "Page.createIsolatedWorld",
+                {"frameId": frame_id, "worldName": WALKER_WORLD, "grantUniveralAccess": False},
+                self.top,
+            )
+        except Exception:  # noqa: BLE001 - mid-navigation: unreadable this time
+            return None
+        ctx = made.get("executionContextId")
+        return (self.top, ctx) if isinstance(ctx, int) else None
+
+    async def owner_origin_box(
+        self, frame_id: str, where: tuple[str, int | None]
+    ) -> tuple[float, float] | None:
         """Where the frame's viewport sits in the page's, or ``None`` when it cannot
         be placed exactly (scaled, rotated, gone)."""
         try:
@@ -146,7 +207,7 @@ class FrameOps:
                 "model"
             ) or {}
             q = model.get("content")
-            size = await self._eval(sid, "[innerWidth, innerHeight]")
+            size = await self._eval(where, "[innerWidth, innerHeight]")
         except Exception:  # noqa: BLE001 - the frame is gone or mid-navigation
             return None
         if not isinstance(size, list) or len(size) != 2:
@@ -160,11 +221,11 @@ class FrameOps:
         frame's point plus its owner's box.
         """
         frame_id = self.registry.frame_of(tag)
-        sid = self.registry.session_of(frame_id) if frame_id else ""
-        if not sid:
+        where = await self.where(frame_id) if frame_id else None
+        if where is None:
             return None
         try:
-            value = await self._walker(sid, method, local_ref, *args)
+            value = await self._walker(where, method, local_ref, *args)
         except Exception:  # noqa: BLE001 - the frame went away under the call
             return None
         if (
@@ -173,7 +234,7 @@ class FrameOps:
             and isinstance(value.get("x"), (int, float))
             and isinstance(value.get("y"), (int, float))
         ):
-            at = await self.owner_origin_box(frame_id, sid)
+            at = await self.owner_origin_box(frame_id, where)
             if at is None:
                 return {"ok": False, "code": "frame_unplaceable"}
             value = {**value, "x": float(value["x"]) + at[0], "y": float(value["y"]) + at[1]}
@@ -202,18 +263,24 @@ class FrameOps:
             out.append(frame_id)
         return out
 
-    async def frame_url(self, sid: str) -> str:
-        tree = await self._send("Page.getFrameTree", {}, sid)
+    async def frame_url(self, frame_id: str, where: tuple[str, int | None]) -> str:
+        if where[1] is not None:
+            return (await self._children()).get(frame_id, "")
+        tree = await self._send("Page.getFrameTree", {}, where[0])
         return str(((tree.get("frameTree") or {}).get("frame") or {}).get("url") or "")
 
     async def outline(self, frame_id: str, budget: int) -> tuple[int, str, list[Any]] | None:
         """``(tag, url, nodes)`` of one frame, its refs already ``f<tag>``-prefixed."""
-        sid = self.registry.session_of(frame_id) if frame_id else ""
-        if not sid or budget <= 0:
+        if not frame_id or budget <= 0:
             return None
         try:
-            url = await self.frame_url(sid)
-            data = await self._walker(sid, "snapshot", budget)
+            if not self.registry.session_of(frame_id):
+                await self.adopt(frame_id)
+            where = await self.where(frame_id)
+            if where is None:
+                return None
+            url = await self.frame_url(frame_id, where)
+            data = await self._walker(where, "snapshot", budget)
         except Exception:  # noqa: BLE001 - the frame navigated or went away
             return None
         if not isinstance(data, dict) or not isinstance(data.get("nodes"), list):
@@ -226,7 +293,7 @@ class FrameOps:
             n = dict(n)
             if n.get("ref"):
                 n["ref"] = f"f{tag}{n['ref']}"
-            n.pop("slot", None)  # an OOPIF nested in this one is not read
+            n.pop("slot", None)  # a cross-origin frame nested in this one is not read
             nodes.append(n)
         return tag, url, nodes
 
@@ -237,7 +304,7 @@ class FrameOps:
         script: the top document's ``activeElement`` in an isolated world (page
         script cannot patch it there), then ``DOM.describeNode`` for its frame id.
         Only that frame is asked what its field is; ``None`` when it is not one
-        we hold a session for.
+        we read (a child session, or a same-process frame :meth:`adopt` took).
         """
         try:
             tree = await self._send("Page.getFrameTree", {}, self.top)
@@ -263,10 +330,10 @@ class FrameOps:
             finally:
                 await self._send("Runtime.releaseObject", {"objectId": obj}, self.top)
             frame_id = str((desc.get("node") or {}).get("frameId") or "")
-            sid = self.registry.session_of(frame_id) if frame_id else ""
-            if not sid:
+            where = await self.where(frame_id) if frame_id else None
+            if where is None:
                 return None
-            active = await self._walker(sid, "activeField")
+            active = await self._walker(where, "activeField")
         except Exception:  # noqa: BLE001 - unreadable: the caller fails closed
             return None
         if not isinstance(active, dict) or not active.get("focused") or active.get("frame"):
@@ -279,7 +346,16 @@ class FrameOps:
         total = 0
         for _frame_id, sid in self.registry.frames():
             try:
-                n = await self._walker(sid, method)
+                n = await self._walker((sid, None), method)
+            except Exception:  # noqa: BLE001
+                n = None
+            total += n if isinstance(n, int) and not isinstance(n, bool) else 1
+        for frame_id in list(self.registry.local):
+            try:
+                where = await self.where(frame_id)
+                if where is None and frame_id not in self.registry.local:
+                    continue  # it left the page: nothing there to count
+                n = await self._walker(where, method) if where is not None else None
             except Exception:  # noqa: BLE001
                 n = None
             total += n if isinstance(n, int) and not isinstance(n, bool) else 1

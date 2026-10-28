@@ -83,6 +83,8 @@ class FakePage:
         #: frame id -> {"loaderId", "url", "owner": node, "session": child sid or ""}
         self.frames: dict[str, dict[str, Any]] = {}
         self.child_refs: dict[str, dict[str, int]] = {}
+        #: Refs the walker minted in a same-process frame's own walker world.
+        self.world_refs: dict[str, int] = {}
         self._ctx: dict[int, str] = {}
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.focused: int | None = None
@@ -107,9 +109,13 @@ class FakePage:
         *,
         session: str = "",
         content: tuple = (100, 200, 400, 300),
+        pierce: bool = False,
         **owner: Any,
     ) -> int:
-        """An ``<iframe>`` in the top document whose viewport starts at *content*'s corner."""
+        """An ``<iframe>`` in the top document whose viewport starts at *content*'s corner.
+
+        *pierce*: the frame runs in the tab's own process (same site), so the
+        browser's hit test answers the node inside it rather than its owner."""
         self._seq += 1
         node = self._seq
         x, y, w, h = content
@@ -125,6 +131,7 @@ class FakePage:
             "url": url,
             "owner": node,
             "session": session,
+            "pierce": pierce,
         }
         return node
 
@@ -169,6 +176,13 @@ class FakePage:
             self._ctx[ctx] = params["frameId"]
             return {"executionContextId": ctx}
         if method == "Runtime.evaluate":
+            if "contextId" in params and "__kcRefs" in params["expression"]:
+                # A same-process frame's walker world (frames.WALKER_WORLD).
+                ref = re.search(r"get\('(e\d+)'\)", params["expression"])
+                node = self.world_refs.get(ref.group(1)) if ref else None
+                if node is None or self._ctx.get(params["contextId"]) != self.nodes[node]["frame"]:
+                    return {"result": {"type": "object", "subtype": "null"}}
+                return {"result": {"objectId": f"m:{node}"}}
             if "contextId" in params:  # the sign-in takeover's region read
                 return {"result": {"value": {"region": self.region, "vw": 1280, "vh": 800}}}
             ref = re.search(r"get\('(e\d+)'\)", params["expression"])
@@ -195,11 +209,16 @@ class FakePage:
         if method == "DOM.getNodeForLocation":
             # The browser's own hit test: the frame owner unless a decoy (even a
             # pointer-events: none one) is laid over it.
-            for f in self.frames.values():
+            # A frame in the tab's own process (``pierce``) is hit-tested through:
+            # Chrome answers the node inside it and that frame's id.
+            for fid, f in self.frames.items():
                 owner = self.nodes.get(f["owner"]) if f["owner"] else None
                 if owner and owner.get("hit") and not owner.get("decoy"):
+                    if f.get("pierce"):
+                        inner = next(n for n, v in self.nodes.items() if v["frame"] == fid)
+                        return {"backendNodeId": inner, "frameId": owner.get("hit_frame", fid)}
                     return {"backendNodeId": f["owner"]}
-            return {"backendNodeId": 1}
+            return {"backendNodeId": 1, "frameId": self.frame["id"]}
         if method == "DOM.getBoxModel":
             x, y, w, h = self.nodes[params["backendNodeId"]]["content"]
             return {"model": {"content": [x, y, x + w, y, x + w, y + h, x, y + h]}}
@@ -521,6 +540,12 @@ def test_the_outline_marks_a_password_field_with_no_ref() -> None:
     assert line("hidden") == '- textbox "Password" [password] [not usable yet]'
     assert line("disabled") == '- textbox "Password" [password] [not usable yet]'
     assert line("covered") == '- textbox "Password" [password] [covered]'
+    # A covered text box keeps its ref: both show.
+    covered_text = {"depth": 0, "role": "textbox", "name": "Email", "ref": "e3"}
+    assert (
+        format_outline([{**covered_text, "state": {"covered": True}}])
+        == '- textbox "Email" [ref=e3] [covered]'
+    )
 
 
 async def test_a_stale_ref_and_a_non_web_page_are_refused() -> None:

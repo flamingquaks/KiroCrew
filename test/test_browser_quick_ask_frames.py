@@ -281,6 +281,146 @@ async def test_a_same_origin_frame_binds_through_the_stream_session() -> None:
     assert page.inserts == [(page.refs["e5"], CANARY)]
 
 
+@pytest.mark.parametrize(
+    "hit, code",
+    [("inside_the_frame", ""), ("top_document_decoy", "covered"), ("another_frame", "covered")],
+)
+async def test_a_frame_in_the_tabs_own_process_is_hit_tested_through(hit: str, code: str) -> None:
+    """Same site, another origin (idmsa.apple.com in store.apple.com): Chrome runs the
+    frame in the tab's own process, and its hit test answers the field INSIDE the
+    frame, not the ``<iframe>``. That passes only when the node it names is in the
+    bound frame; a decoy in the top document or in a third frame is still refused."""
+    page = FakePage()
+    page.frame.update(url=TOP_URL)
+    owner = page.nodes[page.add_frame("F3", IDMSA, pierce=True)]
+    page.add("e5", frame="F3", type="password", rect=[10, 10, 200, 30])
+    if hit == "top_document_decoy":
+        owner["decoy"] = True  # elementFromPoint still sees the frame; the browser does not
+    elif hit == "another_frame":
+        owner["hit_frame"] = "F9"
+    hub, _rec = await _live(page)
+    _registry(hub, page)
+    out = await browser_ask.run_ask(
+        hub, KEY, {"kind": "credentials", "targets": ["password=e5"], "reason": "Sign in"}
+    )
+    if code:
+        assert out == {"ok": True, "outcome": "refused", "code": code}, out
+        assert hub.get(KEY).ask is None  # type: ignore[union-attr]
+        return
+    assert out["ok"] is True and "ask_id" in out, out
+    ask = hub.get(KEY).ask  # type: ignore[union-attr]
+    assert (ask.frame_id, ask.origin, ask.frame_session) == (
+        "F3",
+        "https://idmsa.apple.com",
+        SESSION,
+    )
+    status, body, _ = await _answer(
+        {"ask_id": ask.id, "action": "fill", "values": {"password": CANARY}}
+    )
+    assert (status, body["outcome"]) == (200, "filled")
+    assert page.inserts == [(page.refs["e5"], CANARY)]
+
+
+@pytest.mark.parametrize("adopted", [True, False])
+async def test_a_frame_ref_in_a_same_process_frame_binds_through_the_stream_session(
+    adopted: bool,
+) -> None:
+    """``f1e5`` in a same-process cross-origin frame resolves in that frame's walker
+    world on the stream's own session, and only when the snapshot adopted the frame."""
+    page = FakePage()
+    page.frame.update(url=TOP_URL)
+    page.add_frame("F2", IDMSA, pierce=True)
+    node = page.add("x5", frame="F2", type="password", rect=[10, 10, 200, 30])
+    page.world_refs["e5"] = node
+    hub, _rec = await _live(page)
+    reg = _registry(hub, page)
+    assert reg.tag_of("F2") == 1
+    if adopted:
+        reg.local.add("F2")
+    out = await browser_ask.run_ask(
+        hub, KEY, {"kind": "credentials", "targets": ["password=f1e5"], "reason": "Sign in"}
+    )
+    if not adopted:
+        assert out == {"ok": True, "outcome": "refused", "code": "ref_stale"}, out
+        return
+    assert out["ok"] is True and "ask_id" in out, out
+    ask = hub.get(KEY).ask  # type: ignore[union-attr]
+    assert (ask.frame_id, ask.origin, ask.frame_session) == (
+        "F2",
+        "https://idmsa.apple.com",
+        SESSION,
+    )
+    assert ask.top_origin == "https://secure9.store.apple.com"
+    status, body, _ = await _answer(
+        {"ask_id": ask.id, "action": "fill", "values": {"password": CANARY}}
+    )
+    assert (status, body["outcome"]) == (200, "filled")
+    assert page.inserts == [(node, CANARY)]
+
+
+class _SameProcessRelay:
+    """The top session of a tab whose cross-origin frame F2 shares its process."""
+
+    WORLD = 41
+
+    def __init__(self) -> None:
+        self.children = [{"frame": {"id": "F2", "url": IDMSA + "?token=x"}}]
+        self.calls: list[tuple[str, dict[str, Any], str | None]] = []
+
+    async def send(self, method: str, params: dict[str, Any], sid: str | None = None) -> Any:
+        self.calls.append((method, params, sid))
+        assert sid == SESSION, "a same-process frame is read through the top session"
+        if method == "Page.getFrameTree":
+            return {"frameTree": {"frame": {"id": "F1"}, "childFrames": self.children}}
+        if method == "Page.createIsolatedWorld":
+            assert params["worldName"] == fr.WALKER_WORLD
+            return {"executionContextId": self.WORLD}
+        if method == "Runtime.evaluate":
+            assert params.get("contextId") == self.WORLD
+            expr = params["expression"]
+            if expr.endswith(".snapshot(1400)"):
+                nodes = [{"depth": 0, "role": "textbox", "name": "Email", "ref": "e1"}]
+                return {"result": {"value": {"url": IDMSA, "nodes": nodes}}}
+            if '.resolve("e1")' in expr:
+                return {"result": {"value": {"ok": True, "x": 10, "y": 20}}}
+            if expr == "[innerWidth, innerHeight]":
+                return {"result": {"value": [400, 300]}}
+            if expr.endswith(".passwordBoxes()"):
+                return {"result": {"value": 1}}
+        if method == "DOM.getFrameOwner":
+            return {"backendNodeId": 99}
+        if method == "DOM.getBoxModel":
+            return {"model": {"content": [100, 200, 500, 200, 500, 500, 100, 500]}}
+        raise AssertionError(f"unexpected {method} {params}")
+
+
+async def test_a_same_process_cross_origin_frame_is_read_in_its_own_walker_world() -> None:
+    relay = _SameProcessRelay()
+    reg = fr.FrameRegistry()
+    reg.parent = SESSION
+    fo = fr.FrameOps(relay, SESSION, reg, "WALKER")
+    tag, url, nodes = await fo.outline("F2", 1400)  # type: ignore[misc]
+    assert (tag, url, reg.local) == (1, IDMSA + "?token=x", {"F2"})
+    assert nodes == [{"depth": 0, "role": "textbox", "name": "Email", "ref": "f1e1"}]
+    # Its refs click at page pixels: the frame's point plus its owner's content corner.
+    assert await fo.call(1, "resolve", "e1") == {"ok": True, "x": 110.0, "y": 220.0}
+    # Its password boxes count toward the guards.
+    assert await fo.count("passwordBoxes") == 1
+    # Gone from the page: forgotten, not counted as unreadable forever.
+    relay.children = []
+    assert await fo.count("passwordBoxes") == 0 and reg.local == set()
+    assert await fo.call(1, "resolve", "e1") is None
+
+
+async def test_only_a_frame_directly_under_the_tab_is_adopted() -> None:
+    relay = _SameProcessRelay()
+    reg = fr.FrameRegistry()
+    reg.parent = SESSION
+    fo = fr.FrameOps(relay, SESSION, reg, "WALKER")
+    assert await fo.outline("F7", 1400) is None  # not a direct child of the top frame
+    assert reg.local == set()
+
+
 # ── the sign-in takeover: credentials with no targets ───────────────────────
 
 

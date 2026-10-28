@@ -1228,7 +1228,7 @@ class LiveStream:
             boxes = value.get("boxes") if isinstance(value, dict) else None
             if not isinstance(boxes, list) or not boxes:
                 continue
-            at = await place.owner_origin_box(frame_id, sid)
+            at = await place.owner_origin_box(frame_id, (sid, None))
             if at is None:
                 continue
             for b in boxes:

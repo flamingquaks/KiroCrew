@@ -131,6 +131,21 @@
     return false;
   }
 
+  // A box that failed visible() only for its size or offsetParent -- a 0 x 0
+  // custom element host such as Reddit's auth-flow-manager, or an inline wrapper
+  // -- still draws its children when nothing about it hides or clips them: the
+  // snapshot walks through it like `display: contents`, emitting nothing for it.
+  function drawsChildren(el, cs) {
+    if (!cs || isFrame(el) || cs.display === "none") return false;
+    if (cs.visibility === "hidden" || cs.visibility === "collapse" || cs.contentVisibility === "hidden") return false;
+    var m = /opacity\(\s*([0-9.]+)(%?)\s*\)/.exec(cs.filter || "");
+    if (parseFloat(cs.opacity || "1") * (m ? parseFloat(m[1]) / (m[2] ? 100 : 1) : 1) <= 0.05) return false;
+    if (/hidden|clip|auto|scroll/.test(cs.overflow + " " + cs.overflowX + " " + cs.overflowY)) return false;
+    if (/paint|strict|content/.test(cs.contain || "")) return false;
+    if ((cs.clipPath || "none") !== "none" || (cs.clip || "auto") !== "auto") return false;
+    return (cs.maskImage || cs.webkitMaskImage || "none") === "none";
+  }
+
   function explicitRole(el) {
     var r = el.getAttribute && el.getAttribute("role");
     return r ? r.trim().toLowerCase() : "";
@@ -552,6 +567,13 @@
         if (interactive(el, role)) {
           var st = stateOf(el, role);
           var why = st.password ? unaskable(el) : "";
+          // A text box something lies over (a cookie or consent dialog) keeps its
+          // ref -- typing and clicking still need it -- but says so: an ask on it
+          // is refused "covered" until the agent closes what covers it.
+          if (!st.password && /^(text|email|tel|search|url|number)$/.test(inputType(el))
+              && unaskable(el) === "covered") {
+            st.covered = true;
+          }
           if (why) {
             // Listed with no ref, and why: "covered" is a dialog or banner the
             // agent can close; "hidden"/"disabled" a later step of the sign-in.
@@ -587,7 +609,13 @@
             if (el.shadowRoot) walk(el.shadowRoot, depth, frames);
             continue;
           }
-          if (!visible(el)) continue;
+          if (!visible(el)) {
+            if (drawsChildren(el, cs)) {
+              walk(el, depth, frames);
+              if (el.shadowRoot) walk(el.shadowRoot, depth, frames);
+            }
+            continue;
+          }
           if (isFrame(el)) {
             var title = (el.getAttribute("title") || el.getAttribute("name") || "").trim().slice(0, NAME_CAP);
             var inner = frameDoc(el);

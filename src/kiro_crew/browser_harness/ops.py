@@ -277,7 +277,7 @@ def format_outline(nodes: list[dict[str, Any]]) -> str:
                 line += " [cross-origin, not read]"
             if st.get("password"):
                 line += " [password]"
-            if st.get("unusable") == "covered":
+            if st.get("unusable") == "covered" or st.get("covered"):
                 line += " [covered]"
             elif st.get("unusable"):
                 line += " [not usable yet]"

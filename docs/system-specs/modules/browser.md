@@ -821,6 +821,19 @@ builtin skill that drove a browser (`web-browse`, `web-verify`, `web-preview`,
 `browser-auth`, and the rest) speak only of this tool; `browser-auth` is "take
 over to sign in".
 
+**What the outline walks.** A `display: contents` wrapper, and a 0 x 0 box that
+hides nothing (not `display: none` or `visibility: hidden`, no clipping overflow,
+`contain` or clip), are walked through: they emit nothing and each child judges
+its own visibility. A password field an ask would refuse has no ref and says why
+(`[covered]` or `[not usable yet]`); a text box something lies over keeps its ref
+and is marked `[covered]`. A cross-origin iframe is a slot the gateway reads
+itself (`browser_harness/frames.py`): an out-of-process one through its child
+session, a same-site one Chrome keeps in the tab's process through the tab's
+session in a fixed isolated world of that frame, in both cases only directly
+under the tab and named `f<tag>e<n>`. The quick ask's hit test at a field in a
+frame passes when the browser's topmost node there is the frame's `<iframe>`, or,
+for a same-process frame, a node of that same frame.
+
 ### Decision-model help (`browser.step`)
 
 An optional add-on: with no decision model, or with any of its gates closed, every
