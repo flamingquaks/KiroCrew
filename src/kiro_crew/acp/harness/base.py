@@ -145,6 +145,7 @@ class ProcessSession(Protocol):
     _pi_steer_channel: Any
     _deepseek_gate_nonce: str
     _deepseek_read_only_issue: str
+    _copilot_mcp_config_path: str
 
     def _agent_env_for_spawn(self) -> dict[str, str]:
         """``agent.env`` for the spawn in progress, read at most once per spawn: a
@@ -166,11 +167,17 @@ class ProcessSession(Protocol):
     def _pooled_mcp_servers(self) -> list[dict[str, Any]]:
         """The pooled broker stubs the session/new array appends (blocking)."""
 
+    async def _discard_copilot_mcp_config(self) -> None:
+        """Remove this session's Copilot CLI launch MCP config, if one was written."""
+
     async def _seed_session_settings(self) -> None:
         """Seed the session's own settings file, best-effort."""
 
     async def _prepare_claude_side_read_denies(self) -> None:
         """Build a Side Chat session's sensitive-path deny rules off the loop, fail closed."""
+
+    def _install_idle_reader(self) -> None:
+        """Have the session read stdout between turns (idempotent)."""
 
 
 @dataclass(frozen=True)
@@ -272,6 +279,16 @@ class SessionExtras:
     Typed loosely so this module stays free of :mod:`kiro_crew.agent`, whose
     import chain reaches the config loader. ``None`` when the host mirrors
     nothing, or takes its agent at spawn time.
+    """
+
+    vault_identity: str = ""
+    """The Crew vault identity fingerprint read as this payload was built.
+
+    For a host that takes its credential from Crew's own vault per call (KAS):
+    the account the session's request goes out under, which the KAS catalog
+    recorder keeps with the response's ``model`` select
+    (``agent_sdk/kas_model_catalog.py``). ``""`` for every other host, which
+    records nothing; read here so no other host's session start gains a step.
     """
 
 

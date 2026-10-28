@@ -239,6 +239,21 @@ def _reset_degraded_config_observations():
 
 
 @pytest.fixture(autouse=True)
+def _forget_sandbox_launch_mark():
+    """Forget that an entry point saw the sandbox marker.
+
+    ``sandbox_launch_mark`` never forgets within a process, by design. A test that sets
+    ``KIROCREW_SANDBOX_ACTIVE`` and runs ``cli.main`` would otherwise make every later
+    enterprise test in the worker boot as a sandboxed child.
+    """
+    from kiro_crew import sandbox_launch_mark
+
+    sandbox_launch_mark._launched_in_sandbox = False
+    yield
+    sandbox_launch_mark._launched_in_sandbox = False
+
+
+@pytest.fixture(autouse=True)
 def _reset_channel_turn_ceiling():
     """Forget the channel turn ceiling's process-global per-conversation counts.
 
@@ -475,6 +490,34 @@ def _disarm_agent_slice_memory_high():
 
 
 @pytest.fixture(autouse=True)
+def _reset_crewmate_worker_slots():
+    """A test that registers a session key as a crewmate worker must not leak it.
+
+    ``_CREWMATE_WORKER_SLOTS`` and ``_CREWMATE_WORKER_PROMPT_IN_CONTEXT`` are
+    process-wide sets in ``kiro_crew.members_parts.member_sessions``.
+    ``note_crewmate_worker_session`` mutates them directly (not through a
+    monkeypatch), so a test that calls ``resolve_session_agent_bindings`` or
+    ``note_worker_session`` with a worker execution silently contaminates every
+    later test on the same xdist worker that calls ``get_or_create`` on the same
+    key: the allocation's crewmate-worker gate fires and raises
+    ``CapabilityStartupError("capability_harness_unsupported")`` against a plain
+    mock provider that never set ``mate_worker_kit_supported = True``.
+    """
+
+    def clear():
+        module = sys.modules.get("kiro_crew.members_parts.member_sessions")
+        if module is not None:
+            module._CREWMATE_WORKER_SLOTS.clear()
+            module._CREWMATE_WORKER_PROMPT_IN_CONTEXT.clear()
+
+    clear()
+    try:
+        yield
+    finally:
+        clear()
+
+
+@pytest.fixture(autouse=True)
 def _reset_live_execution_records():
     """A reused temporary home must not inherit another test's live records."""
 
@@ -596,6 +639,21 @@ def _no_boot_sandbox_sweep(_floor_monkeypatch):
     from kiro_crew import session as session_mod
 
     _floor_monkeypatch.setattr(session_mod, "cleanup_stale_sandbox_profiles", lambda *a, **kw: 0)
+
+
+@pytest.fixture(autouse=True)
+def _no_boot_heap_freeze(_floor_monkeypatch):
+    """A test that drives the gateway's ``run()`` must not freeze this worker's heap.
+
+    ``run()`` calls ``gc.freeze()`` once its socket is bound, which moves every
+    object the worker holds into the permanent generation for the rest of the
+    process: cyclic garbage alive at that moment is never collected, in whichever
+    test runs next. A test of the freeze itself patches the same name inside its
+    body (``TestRunFreezesBootHeap``) and so overrides this.
+    """
+    import gc
+
+    _floor_monkeypatch.setattr(gc, "freeze", lambda: None)
 
 
 @pytest.fixture(autouse=True)

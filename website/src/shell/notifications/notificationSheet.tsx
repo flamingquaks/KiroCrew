@@ -15,6 +15,7 @@ import AskAgentButton from '../../components/AskAgentButton'
 import NotificationDetailPanel from '../../components/notifications/NotificationDetailPanel'
 import NotificationFeed from '../../components/notifications/NotificationFeed'
 import NotificationBanner from '../../components/notifications/NotificationBanner'
+import FileMenuResultToast from '../../components/notifications/FileMenuResultToast'
 import { recordEvent } from '../../rum'
 import { i18nT } from '../../i18n/t'
 import { uiLocation } from '../../uiLocations/uiLocation'
@@ -408,7 +409,6 @@ export function NotificationSheet({ sheet }: { sheet: ReturnType<typeof useNotif
                 gate={proceed => leave(proceed, '/chat')}
                 onHandoff={closePanel}
               />
-              <div className="text-[12px] text-muted">{i18nT('app.notifications_ask_agent_help')}</div>
               <button className="text-[12px] text-accent hover:text-accent-hover bg-transparent border-none cursor-pointer" onClick={() => leave(() => { closePanel(); navigate('/notifications') }, '/notifications')}>{i18nT('app.open_the_full_inbox')}</button>
             </div>
           )}
@@ -512,6 +512,7 @@ export function NotificationSheet({ sheet }: { sheet: ReturnType<typeof useNotif
         bellRef={bellRef}
         popoverOpen={phase !== 'closed'}
         onOpenNote={openPanelOn}
+        after={<FileMenuResultToast />}
       />,
       document.body
     )}

@@ -157,7 +157,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
     messages, messagesRef, kiroCrewVersion, completedTurnCount, knowledgeFetch, knowledgeFetchRef, softStopAtMapRef, sentMessages, slotRunning, slotRunningRef, turnDisclosure, setTurnDisclosureFor,
     toolDisclosure, setToolDisclosureFor, turnRowMayBeLive, composerBusy, projectLocked, slotStopping, slotLoading, slotSwitchTarget, pendingQuestion, restoredQuestionNotice, pendingFollowup,
     folderSuggestion, followupTsBySlot, splitMode, setSplitMode, clearSplitOnSelect, crewWindow, openEmbeddedCrewWindow, navigateToEmbeddedSlot, splitAnchor, setSplitAnchor, activeTip, dismissTip,
-    slotState, contextPct, contextTokens, activityOpen, slotHasMore, slotOldestIndex, cursorIsForActiveSlot, loadingOlder, olderFailed, activeViewIsBoundedPage, history, historyHasMore,
+    slotState, contextPct, contextTokens, activityOpen, slotHasMore, slotOldestIndex, cursorIsForActiveSlot, loadingOlder, olderFailed, activeViewIsBoundedPage, history, historyHasMore, environmentStart,
   } = useActiveSlotState({
     embedded, embedMode, popout, navigate, searchParams, activeSlot,
   })
@@ -603,7 +603,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
     followUpPicked, followUpPickedRef, toggleFollowUpOption,
     composerRootChange, composerUserEdit: followUpUserEdit,
   } = useFollowUpChips({
-    messages, isStreaming, pendingQuestion, activeSlot, inputRef, setInput, prefillEdited, setPrefillEdited,
+    messages, isStreaming, turnRunning: !!slotRunning, pendingQuestion, activeSlot, inputRef, setInput, prefillEdited, setPrefillEdited,
   })
   // Shared Crew typing presence: the user's own edit happened, never what it was.
   const composerUserEdit = useComposerEditWithTyping(followUpUserEdit)
@@ -840,6 +840,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
   const {
     queuedMessages, systemDeliveryCount, steer, stopTurn, keepQuestionAnswer, answerQuestionCard,
     handleCancelQueued, handleInterruptQueued, handleEditQueued, handleReorderQueued, queuePendingIds,
+    handleSteerAction, steerActionPending, steerActionRefusals, steerActionRequestFailures,
   } = useBusyTurnControls({
     activeSlot,
     messageQuote,
@@ -848,6 +849,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
     activeSlotRef,
     slotRunning,
     messages,
+    transcriptAuthoritative: !slotLoading && slotSwitchTarget !== activeSlot,
     send,
     steerMutation,
     composerRef,
@@ -907,7 +909,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
     approve, dismissApproval, revealAppInPanel, lastTextIdx, regenerating, handleRegenerate, continuable, continuing, freshSession, handleContinue, handleFreshSession, interrupted,
     openDefaultModelSetting, openKiroSignIn, openMemberCapabilities, openModelPickerFromError, openTurnLimitSetting, quoteWholeMessage, handleAsk, handleQuote, handleEditResend, editLast, farmPassRef,
     handleEditConsumed, renderUserContentCb, transcriptHot, toggleAct, handleSpeak, handleApplyPlan, renderedDisplayItems, stableMsgKey, handleLoadEarlier, isPinned, handleJumpToQuote,
-    handleTogglePinForMessage,
+    handleTogglePinForMessage, handleSteerAction, steerActionPending, steerActionRefusals, steerActionRequestFailures,
   })
   const {
     mobileSessions, drawerMounted, drawerX, drawerPanelRef, drawerScrimRef, sideOverlayX, sideOverlayPanelRef, sideOverlayPhase, drawerScrim, openSidebar, closedSessionActions, sidebarFolderActions,
@@ -1058,7 +1060,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
             <ChatTranscriptView
               embedded={embedded} popout={popout} activeSlot={activeSlot} appToolCallIds={appToolCallIds} titleInTopbar={titleInTopbar} activityOpen={activityOpen}
               completedTurnCount={completedTurnCount} cursorIsForActiveSlot={cursorIsForActiveSlot} kiroCrewVersion={kiroCrewVersion} loadingOlder={loadingOlder} olderFailed={olderFailed}
-              setTurnDisclosureFor={setTurnDisclosureFor} slotHasMore={slotHasMore} slotLoading={slotLoading} slotRunning={slotRunning} slotState={slotState} slotStopping={slotStopping}
+              setTurnDisclosureFor={setTurnDisclosureFor} slotHasMore={slotHasMore} slotLoading={slotLoading} slotRunning={slotRunning} slotState={slotState} environmentStart={environmentStart} slotStopping={slotStopping}
               slotSwitchTarget={slotSwitchTarget} turnDisclosure={turnDisclosure} turnRowMayBeLive={turnRowMayBeLive} setInput={setInput} isWelcomeState={isWelcomeState} chatConfig={chatConfig}
               scrollerRef={scrollerRef} bindScroller={bindScroller} handleSurveyLayoutChange={handleSurveyLayoutChange} onScrollPin={onScrollPin} pinned={pinned} approve={approve}
               dismissApproval={dismissApproval} currentSlot={currentSlot} regenerating={regenerating} sendUnconfirmed={sendUnconfirmed} dockH={dockH} lastRole={lastRole} streamTick={streamTick}

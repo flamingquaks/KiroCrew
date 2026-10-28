@@ -49,7 +49,10 @@ if TYPE_CHECKING:
     )
     from kiro_crew.dashboard.chat_turn.mcp_session import _redact_acp_string
     from kiro_crew.dashboard.chat_turn.model_fallback import _backfill_canonical_model
-    from kiro_crew.dashboard.chat_turn.native_cards import _native_subagent_close_all
+    from kiro_crew.dashboard.chat_turn.native_cards import (
+        NATIVE_SUBAGENT_INTERRUPTED_ERROR,
+        _native_subagent_close_all,
+    )
     from kiro_crew.dashboard.chat_turn.tool_rows import _MAX_TCID_SOURCES
     from kiro_crew.dashboard.chat_turn.turn_ledgers import _report_consumed, _wt_collect
     from kiro_crew.dashboard.chat_turn.turn_locals import _ChatTurn, _Flow
@@ -425,7 +428,7 @@ async def _on_complete(turn: _ChatTurn, event) -> Literal[_Flow.BREAK] | None:
     # off that value: an un-latched `""` would read as "not cancelled"
     # and settle the debt on a turn kiro-cli DISCARDS, so the next warm
     # turn goes out without the history the cancelled prompt carried
-    # (GPT 6.1 F1 — crash-data-loss). Latching here closes that window:
+    # (a data loss). Latching here closes that window:
     # a cancelled completion sets `_stop_reason = STOP_REASON_CANCELLED`
     # before the first await, so the settle correctly stays armed.
     if event.stop_reason:
@@ -516,8 +519,17 @@ async def _on_complete(turn: _ChatTurn, event) -> Literal[_Flow.BREAK] | None:
     _children_unfinished = any(not _i.get("done") for _i in _native_tracker.values())
     # Safety net: complete any native subagent cards still marked
     # running at turn end (in case a terminal status was missed),
-    # so cards don't stay stuck "running".
-    _native_subagent_close_all(state, slot, _native_tracker, _native_card_output)
+    # so cards don't stay stuck "running". Only a raw end_turn counts
+    # as a normal landing; a cancel, refusal or synthesized completion
+    # cut its children off, so their cards close as interrupted.
+    _landed_normally = event.stop_reason == STOP_REASON_END_TURN and not event.synthetic_completion
+    _native_subagent_close_all(
+        state,
+        slot,
+        _native_tracker,
+        _native_card_output,
+        error=None if _landed_normally else NATIVE_SUBAGENT_INTERRUPTED_ERROR,
+    )
     _u = event.usage
     if monitor_completion is not None and is_monitor_completion_evidence(
         event.stop_reason,
@@ -688,7 +700,7 @@ async def _on_complete(turn: _ChatTurn, event) -> Literal[_Flow.BREAK] | None:
     #      abnormal-end seam, which — seeing the row already claimed —
     #      records nothing, so the turn's ONLY kirocrew.turn.* sample
     #      is lost. Emitting first makes the sample survive a
-    #      cancelled persist (GPT/Opus terminal-metric finding).
+    #      cancelled persist.
     #   2. The persist sits behind usage_has_billing. A turn that
     #      timed out having billed nothing writes no row, and letting
     #      the row's absence swallow the sample would drop exactly the
@@ -724,7 +736,7 @@ async def _on_complete(turn: _ChatTurn, event) -> Literal[_Flow.BREAK] | None:
         # thread picks up the write cancels that future so the append
         # never lands -- while the claim above already told the
         # abnormal-end seam the row was written, so the seam writes
-        # nothing and the row is lost (GPT 6.1 F1). asyncio.shield runs
+        # nothing and the row is lost. asyncio.shield runs
         # the write as its own task the turn's cancel cannot reach, so
         # the append completes; the CancelledError still propagates
         # afterwards. The claim-before-await also keeps the double-bill
@@ -732,7 +744,7 @@ async def _on_complete(turn: _ChatTurn, event) -> Literal[_Flow.BREAK] | None:
         # cancellation would unwind into the abnormal-end seam with the
         # guard still False and the seam would re-read live stats and
         # bill the turn a second time. Claimed here, the seam sees it
-        # recorded and writes nothing (GPT/Opus double-bill finding).
+        # recorded and writes nothing.
         turn._turn_usage_persisted = True
         # Late backfill: CC reports model only via the `init`
         # system event which arrives after the run starts, so

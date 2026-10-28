@@ -313,6 +313,19 @@ class SubagentInfo:
     # returns, so this is the only sign the parent was never told, and the run
     # loop writes no ``delivered`` tombstone while it is set.
     _report_undelivered: bool = False
+    # True when the shutdown cancelled this run and left it for the next start:
+    # its parent is a dashboard chat, so no ``cancelled`` tombstone was written.
+    # The report skips ``_on_done`` and marks nothing delivered, so held wave
+    # siblings and owed reports stay visible to the next start's orphan sweep,
+    # which announces the run in that tab, with a resume hint while its
+    # conversation survives. A report made now could only queue in a slot that
+    # does not survive the restart or start a turn the shutdown refuses.
+    _left_for_next_start: bool = False
+    # True once ``create_agent_folder`` wrote this run's ``state.json``: the file
+    # the next start's orphan sweep finds runs by. Kept in memory so the shutdown
+    # can decide which runs to leave to that sweep without reading the disk on
+    # the event loop.
+    _folder_seeded: bool = False
     # True when the gateway QUEUED this completion's injection because the
     # parent's slot was busy. Delivery is not consumption: the announce sits in
     # the slot queue until a turn drains it, and that wait is bounded only by the
@@ -656,6 +669,12 @@ class SubagentInfo:
     # non-success completion (stall, cancel, error). The parent must not read
     # it as a finished answer.
     partial: bool = False
+    # True when the run ended NORMALLY but its final segment carries a tool
+    # call written as prose (``has_leaked_tool_call``): that call never ran,
+    # so the requested output may be missing although the run completed.
+    # Notice-only: the outcome stays completed (earlier calls may have taken
+    # effect); the parent is told to check the work (LEAKED_TOOL_CALL_NOTE).
+    leaked_tool_call: bool = False
     # Continue-nudges already spent recovering a ``stalled`` / ``recovering``
     # completion in place (``STOP_RECOVERY_MAX_RETRIES`` budget, shared with
     # the main chat's ``slot._tool_stall_retries``).

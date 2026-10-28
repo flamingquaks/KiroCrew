@@ -32,6 +32,7 @@
         "kas_persist_mcp_sign_in": false,
         "kas_bundle_url": "https://kas.crew.kiro.dev",
         "default_agent": "",
+        "crew_mode_agent": "kirocrew-conductor",
         "deepseek_env": {},
         "sweep_agents_backups": false,
         "sandbox": "auto",
@@ -423,6 +424,20 @@
       "hasChildren": false,
       "enumValues": null,
       "defaultValue": ""
+    },
+    {
+      "path": "agent.crew_mode_agent",
+      "kind": "core",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "label": "Crew Mode conductor",
+      "help": "The conductor template a chat runs when Crew Mode is turned on. Empty falls back to the default. Takes effect live for new chats; no gateway restart.",
+      "hasChildren": false,
+      "enumValues": null,
+      "defaultValue": "kirocrew-conductor"
     },
     {
       "path": "agent.deepseek_env",
@@ -2191,6 +2206,7 @@
         "embedding_bulk_threads": 1,
         "embedding_bulk_duty": 0.2,
         "embedding_idle_evict_secs": 3600,
+        "embedding_child_process": false,
         "embed_model_url": "",
         "embed_model_path": "",
         "embed_model_id": "",
@@ -2304,6 +2320,20 @@
       "hasChildren": false,
       "enumValues": null,
       "defaultValue": 3600
+    },
+    {
+      "path": "memory.embedding_child_process",
+      "kind": "core",
+      "type": "boolean",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "label": "Run Embeddings in a Child Process",
+      "help": "Load the embedding model and run inference in a separate low-priority process, so embedding work never competes with the gateway itself. Off by default: the model runs inside the gateway. Takes effect at the next model load.",
+      "hasChildren": false,
+      "enumValues": null,
+      "defaultValue": false
     },
     {
       "path": "memory.embed_model_url",
@@ -3388,6 +3418,7 @@
       "defaultValue": {
         "coder_url": "",
         "profiles": [],
+        "default_profile": "",
         "stop_on_shutdown": true
       }
     },
@@ -3502,6 +3533,20 @@
       "hasChildren": false,
       "enumValues": null,
       "defaultValue": true
+    },
+    {
+      "path": "session_environments.default_profile",
+      "kind": "core",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "label": "Default Environment",
+      "help": "Profile id new dashboard chats start on; empty runs them on this machine. Applied once, when a chat is created, and changeable in its composer until the first message. Scheduled jobs, channels and subagents are unaffected (a subagent follows its parent).",
+      "hasChildren": false,
+      "enumValues": null,
+      "defaultValue": ""
     },
     {
       "path": "session_environments.stop_on_shutdown",
@@ -5261,6 +5306,70 @@
       "defaultValue": 3.0
     },
     {
+      "path": "work_ledger",
+      "kind": "core",
+      "type": "object",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "label": "Work ledger",
+      "help": "Work-ledger nesting: how many levels may conduct.",
+      "hasChildren": true,
+      "enumValues": null,
+      "defaultValue": {
+        "max_depth": 2
+      }
+    },
+    {
+      "path": "work_ledger.max_depth",
+      "kind": "core",
+      "type": "integer",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "label": "Max conducting depth",
+      "help": "How many levels of the work ledger may conduct: depth 0 is the root, so 2 (the default) lets a root dispatch one level of conductors whose own items are workers, and 3 lets those conductors dispatch conductors of their own. Accepted range 2-10; a value outside it is refused at load with a warning and the default applies, it is never clamped. Each extra level multiplies sessions (three levels of three items is 27), so raise it only where concurrency is already capped per level. Lowering it does not touch ledgers already open: new ledgers and new items at the levels it removes are refused.",
+      "hasChildren": false,
+      "enumValues": null,
+      "defaultValue": 2
+    },
+    {
+      "path": "power",
+      "kind": "core",
+      "type": "object",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "label": "Power",
+      "help": "What Knowledge Library sweeps do while on battery.",
+      "hasChildren": true,
+      "enumValues": null,
+      "defaultValue": {
+        "on_battery": "normal"
+      }
+    },
+    {
+      "path": "power.on_battery",
+      "kind": "core",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "label": "On battery",
+      "help": "What Knowledge Library background sweeps do while this machine runs on battery; nothing else reads it yet. 'normal' (the default) ignores the power source. 'reduced' cuts each sweep's chunk budget to a quarter, at least 10 chunks and never more than the configured budget. 'paused' skips the sweeps until the machine is back on mains. A document you add yourself always ingests; a folder you add ingests its first paced batch at once, and the rest of a large folder arrives with the sweeps, so under 'paused' it waits for mains. A host that cannot report its power source counts as plugged in.",
+      "hasChildren": false,
+      "enumValues": [
+        "normal",
+        "reduced",
+        "paused"
+      ],
+      "defaultValue": "normal"
+    },
+    {
       "path": "resource_limits",
       "kind": "core",
       "type": "object",
@@ -5281,6 +5390,7 @@
         "max_cpu_percent": null,
         "max_total_memory_mb": null,
         "max_total_processes": null,
+        "scope_memory_high_pct": null,
         "xdist_auto_cap": null
       }
     },
@@ -5399,6 +5509,21 @@
       "tags": [],
       "label": "Max total processes",
       "help": "cgroup TasksMax for the whole agents SLICE, counting tasks (threads) across every agent tree. 0 or unset uses the module default; the aggregate ceiling is never left unset where a systemd user manager is available (Linux); not enforced on Windows/macOS.",
+      "hasChildren": false,
+      "enumValues": null,
+      "defaultValue": null,
+      "nullable": true
+    },
+    {
+      "path": "resource_limits.scope_memory_high_pct",
+      "kind": "core",
+      "type": "integer",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "label": "Scope memory soft ceiling (%)",
+      "help": "cgroup MemoryHigh for EACH agent runtime scope, as a percent of that scope's own MemoryMax. A runtime that grows past it reclaims its own page cache and is throttled alone, before the shared slice ceiling slows every runtime. Unset or out of range (1-100) uses the default (90); 0 emits no MemoryHigh at all. Linux only.",
       "hasChildren": false,
       "enumValues": null,
       "defaultValue": null,
@@ -7816,6 +7941,7 @@
         "folder_sort": "custom",
         "session_sort": "date-desc",
         "update_nudge": {},
+        "translucent_panels": "",
         "onboarded": false,
         "import_onboarded": false,
         "privacy_acked": false,
@@ -8566,7 +8692,7 @@
       "sensitive": false,
       "tags": [],
       "label": "Prevent Sleep While Running",
-      "help": "Keep this computer awake while the agent is running a task, so a long task is not interrupted by the machine going to sleep. Off by default. Uses caffeinate on macOS, systemd-inhibit on Linux, and SetThreadExecutionState on Windows; on a host with no keep-awake backend it is a no-op.",
+      "help": "Keep this computer awake while the agent is running a task, so a long task is not interrupted by the machine going to sleep. Off by default. Uses caffeinate on macOS, systemd-inhibit on Linux, and SetThreadExecutionState on Windows; on a host with no keep-awake backend it is a no-op. On some Windows laptops (Modern Standby), locking the screen can still let it sleep, so keep the screen on for long tasks.",
       "hasChildren": false,
       "enumValues": null,
       "defaultValue": false
@@ -9018,6 +9144,24 @@
       "hasChildren": true,
       "enumValues": null,
       "defaultValue": {}
+    },
+    {
+      "path": "dashboard.translucent_panels",
+      "kind": "core",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "label": "Translucent Panels",
+      "help": "Show the top bar, the tab bar, the message box, the suggestion chips and the search fields as frosted glass over the content that scrolls under them (the Liquid Glass primitive): 'on', or 'off' for solid cards. Empty = never chosen on this workspace (the browser's own stored choice holds, as before the setting was server-backed). Stored here like the theme mode, not only in the browser, so the choice follows the user across ports, browsers and the desktop app; the browser keeps a copy only so the first paint already matches.",
+      "hasChildren": false,
+      "enumValues": [
+        "",
+        "on",
+        "off"
+      ],
+      "defaultValue": ""
     },
     {
       "path": "dashboard.onboarded",

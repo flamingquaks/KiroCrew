@@ -276,12 +276,14 @@ from conftest_resets import (  # noqa: E402,F401 -- bound for pytest and importe
     _drop_live_config_snapshot,
     _ensure_event_loop,
     _fake_computer_use_backend,
+    _forget_sandbox_launch_mark,
     _fresh_reexec_environment,
     _history_cleanup_throttle_closed,
     _inline_taskq_pump,
     _isolate_advertised_model_cache,
     _isolate_display_verdicts,
     _isolate_kiro_window_cache,
+    _no_boot_heap_freeze,
     _no_boot_sandbox_sweep,
     _no_carried_auto_update_effect,
     _no_live_catalog_network,
@@ -294,6 +296,7 @@ from conftest_resets import (  # noqa: E402,F401 -- bound for pytest and importe
     _reset_channel_turn_ceiling,
     _reset_cjk_segmenter,
     _reset_create_rate_limit_buckets,
+    _reset_crewmate_worker_slots,
     _reset_degraded_config_observations,
     _reset_live_execution_records,
     _reset_runtime_ownership_tables,
@@ -898,6 +901,19 @@ def _reset_reasoning_effort_globals():
     finally:
         _cp._reasoning_effort_values = saved_values
         _cp._reasoning_effort_ordered = saved_ordered
+
+
+@pytest.fixture(autouse=True)
+def _reset_overlay_refresher():
+    """Clear the MCP broker's overlay-refresh hook after each test.
+
+    A test that starts a broker registers its orchestrator's refresh in a module
+    global; left set, a later test's app registration would call into it.
+    """
+    yield
+    from kiro_crew.mcp_gateway import overlay_refresh
+
+    overlay_refresh.set_overlay_refresher(None)
 
 
 #: ``_isolation_root`` / ``_isolation_dirs`` / ``_isolate_kirocrew_home`` live in the

@@ -95,6 +95,31 @@ RUN_DIR_MARKER = ".kirocrew-run-dir"
 #: A memory store name, in the grammar ``memory_stores`` validates; a test pins the two.
 _MEMORY_STORE_NAME = r"[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?"
 _MEMORY_CONSOLIDATION_PREFIX = "memory-consolidation"
+#: Epoch milliseconds from ``int(time.time() * 1000)``; stays 13 digits until year 2286.
+_EPOCH_MS = r"\d{13}"
+#: Epoch seconds from ``int(time.time())``; stays 10 digits until year 2242.
+_EPOCH_SECS = r"\d{10}"
+#: Twelve hex characters from ``secrets.token_hex(6)`` (6 bytes = 12 hex digits).
+_TOKEN_HEX_6 = r"[0-9a-f]{12}"
+#: Workflow run ID ``f"wf_{high:06d}"`` from ``workflow_memory.allocate_run_id``;
+#: 6-digit zero-padded minimum, grows beyond 999999 for large allocator counts.
+_WF_RUN_ID = r"wf_[0-9]{6,}"
+#: Workflow-author startup attempt suffix ``a{n}``; ``n`` is in range 1-3.
+_WF_AUTHOR_ATTEMPT = r"a[0-9]"
+#: One segment of an issue-radar repository path: the character set the GitHub and
+#: GitLab segment validators admit (``github_client_ci._SEARCH_REPO_SEGMENT_RE``,
+#: ``gitlab_transport.SEGMENT_RE``). An Azure segment may hold a space, which
+#: ``_safe_dir_name`` rewrites; such a key stays long-lived, which keeps its folder.
+_REPO_SEGMENT = r"[A-Za-z0-9._-]+"
+#: ``<owner>/<repo>`` as it appears in an issue-radar key -- a GitLab owner may be a
+#: nested ``group/sub`` path -- paired with its directory form. ``_safe_dir_name``
+#: turns every ``/`` into ``_`` and keeps ``#``, and ``_`` is itself a segment
+#: character, so the directory form is the one segment class: splitting it back
+#: into segments would add nothing the marker does not already decide, and a
+#: nested ``_``-separated repeat there would backtrack.
+_REPO_SLUG: tuple[str, str] = (rf"{_REPO_SEGMENT}(?:/{_REPO_SEGMENT})+", _REPO_SEGMENT)
+#: ``<owner>/<repo>#<number>``: one issue or pull request of that repository.
+_REPO_ITEM: tuple[str, str] = (rf"{_REPO_SLUG[0]}#[0-9]+", rf"{_REPO_SLUG[1]}#[0-9]+")
 
 
 def _shape_runs_on_this_walk(text: str, separator: str) -> bool:
@@ -113,6 +138,11 @@ def _hex(width: int) -> str:
 
 
 #: Session-key shapes that mint ONE-RUN directories, one regex per key component.
+#: The separator between every part is ':' for the session-key regex and '_' for
+#: the directory-name regex (keys use ':' as delimiter; directory names replace
+#: ':' with '_', as ``config.paths._safe_dir_name`` does).  A component that
+#: carries another character ``_safe_dir_name`` rewrites (the ``/`` of a
+#: repository slug) is a ``(key form, directory form)`` pair instead of one regex.
 #: Subagent ids are the hex run ids ``SubagentManager._mint_agent_id`` draws --
 #: sixteen characters on this tree, eight on the shipped builds whose directories
 #: the sweep also has to recognise; cron job and run ids are the eight-hex UUID
@@ -124,17 +154,39 @@ def _hex(width: int) -> str:
 #: ``cron:<job>:<agent>`` carries a name, not eight hex digits.
 #: Both the key predicate and the directory-name filter are generated from this
 #: table so their shapes cannot diverge.
-_DERIVED_SESSION_SHAPES: tuple[tuple[str, tuple[str, ...]], ...] = (
+_DERIVED_SESSION_SHAPES: tuple[tuple[str, tuple[str | tuple[str, str], ...]], ...] = (
     ("subagent", (_hex(16),)),
     ("subagent", (_hex(8),)),
     ("cron", (_hex(8), _hex(8))),
     (_MEMORY_CONSOLIDATION_PREFIX, (_MEMORY_STORE_NAME, _hex(32))),
+    # taskrunner:refine:<epoch ms> -- one session per _run_refine call;
+    # key minted in dashboard/handlers/taskrunner.py.
+    ("taskrunner", ("refine", _EPOCH_MS)),
+    # hook:default:<epoch s>-<token_hex(6)> -- per-request default session key;
+    # minted in dashboard/handlers/hooks.py when no sessionKey is supplied.
+    ("hook", ("default", rf"{_EPOCH_SECS}-{_TOKEN_HEX_6}")),
+    # wf-author:<wf_run_id>:a<attempt> -- authoring session destroyed after each
+    # workflow run; minted in workflows/service.py.
+    ("wf-author", (_WF_RUN_ID, _WF_AUTHOR_ATTEMPT)),
+    # judge:<uuid4 hex> -- one session per judge call, destroyed on return;
+    # minted in decisions/impl_llm.py.
+    ("judge", (_hex(32),)),
+    # issue-radar-<surface>:<owner>/<repo>[#<number>]:<uuid4 hex> -- one tool-less
+    # call each, released and destroyed on return (_run_oneshot_model); minted in
+    # apps/builtins/issue_radar/backend/http_routes/{ai,recommendations,tagging}.py.
+    ("issue-radar-ai", (_REPO_ITEM, _hex(32))),
+    ("issue-radar-pr-ai", (_REPO_ITEM, _hex(32))),
+    ("issue-radar-reco", (_REPO_SLUG, _hex(32))),
+    ("issue-radar-tagging", (_REPO_SLUG, _hex(32))),
 )
 
 
 def _derived_shape(separator: str) -> str:
+    form = 0 if separator == ":" else 1
     return "|".join(
-        re.escape(prefix) + separator + separator.join(components)
+        re.escape(prefix)
+        + separator
+        + separator.join(c if isinstance(c, str) else c[form] for c in components)
         for prefix, components in _DERIVED_SESSION_SHAPES
     )
 
@@ -172,7 +224,15 @@ def is_disposable_session_key(session_key: str | None) -> bool:
     ``cron:<job_id>`` key belongs to its persistent session; only the stateless
     ``cron:<job_id>:<run_id>`` key is a one-run directory. A memory consolidation
     call's ``memory-consolidation:<store>:<call_id>`` key lives for that one call.
-    Only a derived directory qualifies: a caller-supplied ``cwd`` is always the user's.
+    A decisions-judge call uses ``judge:<uuid4 hex>``, a taskrunner refine session
+    uses ``taskrunner:refine:<epoch ms>``, a webhook default session uses
+    ``hook:default:<epoch s>-<token_hex(6)>`` and a workflow-author session uses
+    ``wf-author:<wf_run_id>:a<attempt>``, and an issue-radar model call uses
+    ``issue-radar-<surface>:<owner>/<repo>[#<number>]:<uuid4 hex>``, whose
+    directory name has ``_`` for each ``/``.  Eval sessions are excluded: they point
+    every provider at a shared workspace, so there is no per-session derived
+    directory.  Only a derived directory qualifies: a caller-supplied ``cwd`` is
+    always the user's.
 
     The memory consolidation shape counts only where the walk holds ``.kiro`` open.
     The by-name form unlinks ``cli.json`` by path, so a junction swapped in for

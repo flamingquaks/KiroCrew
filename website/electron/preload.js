@@ -240,6 +240,14 @@ contextBridge.exposeInMainWorld("wslAPI", {
   detect: () => ipcRenderer.invoke("wsl:detect"),
 });
 
+// What the main window's close button does: "background" or "quit". The main
+// process returns the stored value only to the main window's own dashboard.
+// Absent in plain browsers and in the PWA.
+contextBridge.exposeInMainWorld("closeActionAPI", {
+  get: () => ipcRenderer.invoke("close-action:get"),
+  set: (action) => ipcRenderer.invoke("close-action:set", String(action || "")),
+});
+
 // File-open bridge for the chat path chip's "Open in editor" affordance. Hands
 // a filesystem PATH — never a URL scheme — to the main process, which validates
 // it and calls shell.openPath so the file opens in the OS default handler on the
@@ -382,4 +390,8 @@ contextBridge.exposeInMainWorld("updateAPI", {
   // Auto-download opt-out (Settings > About). ON by default: a discovered
   // update downloads in the background and installs on the next quit.
   setAutoDownload: (enabled) => ipcRenderer.invoke("update:set-auto-download", enabled),
+  // Notify the main process that a security policy provider now governs (or no
+  // longer governs) this install's updates. Called from useUpdateSubscription
+  // whenever update_bundled_by_app and update_managed_by align. Fire-and-forget.
+  notifyPolicyGoverned: (governed) => ipcRenderer.send("update:notify-policy-governed", governed),
 });

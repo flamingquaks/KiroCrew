@@ -76,8 +76,10 @@ if TYPE_CHECKING:  # every owner-defined name in _EXPORTS, for type checkers and
         _SOURCE_BUILTIN,
         _SOURCE_KIROCREW,
         _SOURCE_PACKAGE,
+        RESERVED_DEFAULT_MEMBER,
         _absence_is_confirmed,
         _as_epoch,
+        _live_slot_has_person_rows,
         _live_slot_has_rows,
         _logged_slugs,
         _member_is_created,
@@ -87,6 +89,7 @@ if TYPE_CHECKING:  # every owner-defined name in _EXPORTS, for type checkers and
         _slot_has_unflushed_rows,
         _stamp_welcome_claimed,
         _transcript_holds_message,
+        _transcript_holds_person_message,
         api_members,
         normalize_member_source,
         read_dm_thread_message_state,
@@ -126,6 +129,7 @@ if TYPE_CHECKING:  # names it serves from outside the family, from their homes
     from kiro_crew.config.sections import (  # noqa: F401
         MEMBER_APPROVAL_MODE_UNSET_EFFECTIVE,
     )
+    from kiro_crew.dashboard import members_roster_goals  # noqa: F401
     from kiro_crew.dashboard.chat_persistence import (  # noqa: F401
         pin_private_agent_store,
         rehydrate_slot_from_history_async,

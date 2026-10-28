@@ -68,9 +68,11 @@ removes:
   disabled-when-empty and queue-while-running rules.
 - `toolDetails` reaches `ChatMessageList`'s `toolDetails` prop and the render
   context, so built-in tool rows draw `ToolCallPill` with `expandable={false}`:
-  no toggle, and an open panel closes. A host `renderTool` row is its own.
+  no toggle, and an open panel closes and stays closed when the key is removed.
+  A host `renderTool` row is its own.
 - `header`, `queue` and `followUps` gate their strips; the sent message, the
-  queue and the options themselves are unchanged.
+  queue and the options themselves are unchanged. The sub-agent delivery
+  progress line renders inside the queue strip, so `queue` hides it too.
 
 No key grants a capability, and voice stays off. `ChatEmbed.hide.test.tsx`
 checks each key both ways and compiles the union against an unknown key.
@@ -1990,6 +1992,32 @@ stale entry serves the previous value while refreshing.
 `exposeToApps` are list-valued; a JSON scalar is refused rather than coerced,
 because iterating a string yields its characters (`"*"` → the wildcard, and
 `"/api/chat"` → the prefix `"/"`, which matches every path).
+
+**`permissions.mcpTools` scopes the app's own agents.** When it is non-empty,
+`bridges_agents._register_agents` → `_enforce_declared_mcp_tools` adds every
+host-managed tool the app did not declare (judged by
+`permissions.check_tool_permission`) to each app agent's `managedToolPolicy.exclude`,
+unioned with any exclude the agent spec authored. The managed-tool universe is each
+managed server's unconditional declaration (`mcp_discovery_managed.managed_tool_names_for_policy`),
+so a tool hidden behind a runtime enable is excluded before the enable flips. A managed
+server whose declaration cannot be read has no names to exclude, so it fails closed: it
+is written to `managedToolPolicy.excludeServers` instead, which the session-tool-policy
+endpoint answers as an empty `include` entry for that server, so the server lists and
+runs none of its tools for the agent (a declared one included) until a later
+materialization reads it. Materialization reruns on gateway start (the boot resource
+reconcile calls `register_app` for every enabled app), on enabling or updating the app, when
+the app's backend comes up healthy and its MCP server is registered, and on
+`refresh_app_agents` (an MCP reach-policy change or a health-scrub reconcile); restarting
+the gateway or re-enabling the app recovers a server withheld after a transient read failure. Each written app agent whose spec carries a derived restriction
+is recorded with one bounded SEL event (`operation=app_mcp_tools_restricted`,
+`source=app_agent_materialization`) naming the app, the agent, the count and first twenty
+excluded tool names, and any servers withheld whole; an unrestricted app records none. Only
+sessions on the app's agents are scoped: a cron with no `agent:` runs on the host default
+agent unrestricted, the app's own MCP server tools and base built-ins are never excluded,
+`skill_search` (the path an app agent's own skills are served through) is never derived
+into the exclusion, a malformed authored `managedToolPolicy`, `exclude` or
+`excludeServers` is left as written so the session gate keeps refusing it as
+`policy_unreadable`, and an empty or absent list leaves the app unrestricted.
 
 **User-session control is explicit.** App-token calls that send messages to
 existing local user-owned sessions, choose generated response options, approve

@@ -46,7 +46,7 @@ from typing import TYPE_CHECKING
 # (other names on it may still be read here). The facade keeps binding them, so
 # ``kiro_crew.cli.<name>`` stays the object callers import, type checkers see and patches
 # replace (the mirror at the end of this file sends such a patch to every owner holding it).
-from kiro_crew import _facade_mirror, cli_help, platform_compat, version_line
+from kiro_crew import _facade_mirror, cli_help, platform_compat, sandbox_launch_mark, version_line
 from kiro_crew.apps import builtins as _builtins_pkg
 from kiro_crew.apps.builtins import BUILTIN_NAMES as _BUILTIN_NAMES
 from kiro_crew.cli_log_files import (  # noqa: F401 -- re-exported for existing callers
@@ -243,6 +243,10 @@ def main() -> None:
     # KIROCREW_SANDBOX_LEVEL gets the same treatment: a stale inherited value
     # would be read as the ACTIVE tier by a descendant's passthrough and
     # corrupt its downgrade audit.
+    #
+    # Noted first, because the governance tier asks later where this process takes its
+    # ceiling from (``sandbox_launch_mark``). That answer picks a source, not a looser one.
+    sandbox_launch_mark.note()
     os.environ.pop("KIROCREW_SANDBOX_ACTIVE", None)
     os.environ.pop("KIROCREW_SANDBOX_LEVEL", None)
 
@@ -456,7 +460,6 @@ def main() -> None:
     cli_parser_admin.register_secrets_parser(sub)
     cli_parser_admin.register_pod_parser(sub)
     cli_parser_gateway.register_update_parser(sub)
-    cli_parser_admin.register_file_delivery_parser(sub)
     cli_parser_gateway.register_stop_parser(sub)
     cli_parser_gateway.register_restart_parser(sub)
     cli_parser_gateway.register_gateway_pid_parser(sub)
@@ -963,10 +966,6 @@ def main() -> None:
             from kiro_crew.cli_server import _update
 
             _update(force=args.force)
-    elif args.command == "file-delivery":
-        from kiro_crew.cli_server import _file_delivery_approve
-
-        _file_delivery_approve()
     elif args.command == "stop":
         from kiro_crew.cli_server import _stop
 

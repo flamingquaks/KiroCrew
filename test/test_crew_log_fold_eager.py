@@ -391,20 +391,17 @@ def test_a_fold_after_an_eager_fold_parses_no_entries(parsed):
     assert cold_cost >= 41, f"the cold fold parses the whole unit, measured {cold_cost}"
 
 
-def test_a_binding_recorded_after_a_warm_read_still_reaches_the_workers_unit():
-    """The cached unit list is re-resolved when a conductor unit grows.
+def test_a_report_in_the_workers_log_alone_never_reaches_the_board():
+    """The board reads its conductor's units only.
 
-    What keeps the ``work`` unit-list cache from being a correctness bug. A worker's
-    report lives in the WORKER's log, and the only record that the worker belongs to
-    this board is a ``bind`` entry in the conductor's log -- so a list cached before the
-    bind would leave that worker's units out of the fold for as long as it was held. The
-    guard is the conductor unit's own stat fingerprint, which an append moves.
+    A bind in the conductor's log does not pull the bound worker's log into the
+    fold: the gateway writes the board's own copy of each report into the conductor's
+    log, so the worker's copy is never read, and the open item waits for that copy.
     """
     conductor_slot = WORK_SLOT
     worker_slot = "dashboard:31"
     conductor = _slot_log("s-conductor", conductor_slot)
     _work_entry(conductor, "it-1")
-    # Warm the unit list while the board has no workers at all.
     assert crew_log.read_slot_projection(conductor_slot, "work").value["items"]
 
     worker = _slot_log("s-worker", worker_slot)
@@ -434,14 +431,9 @@ def test_a_binding_recorded_after_a_warm_read_still_reaches_the_workers_unit():
         src=GATEWAY,
     )
 
-    folded = crew_log.read_slot_projection(conductor_slot, "work")
-    item = folded.value["items"][0]
-    assert item["status"] == "done", "the newly bound worker's report reached the fold"
-
-
-# --------------------------------------------------------------------------- #
-# The production wiring
-# --------------------------------------------------------------------------- #
+    item = crew_log.read_slot_projection(conductor_slot, "work").value["items"][0]
+    assert item["status"] is None
+    assert item["summary"] == crew_log.WORK_AWAITING_REPORT
 
 
 def test_the_real_append_path_wakes_the_eager_fold(monkeypatch):
@@ -554,9 +546,8 @@ def test_a_worker_report_advances_the_conductors_board_not_its_own():
     """The board comes from the ENTRY, never from the unit's header.
 
     A worker's log header names the worker's own slot, while its ``work/recorded`` names
-    the conductor's board and reaches that fold only by being joined into it. Folding by
-    the header advances a board nobody reads and leaves the conductor's -- the one the
-    dashboard reads -- exactly as stale as it was.
+    the conductor's board. Folding by the header advances a board nobody reads and leaves
+    the conductor's -- the one the dashboard reads -- exactly as stale as it was.
     """
     conductor_slot = WORK_SLOT
     worker_slot = "dashboard:51"
@@ -575,19 +566,18 @@ def test_a_worker_report_advances_the_conductors_board_not_its_own():
         },
         src=GATEWAY,
     )
-    report = worker.append(
-        "work/recorded",
-        {
-            "slot": conductor_slot,
-            "actor": "worker",
-            "by": worker_slot,
-            "action": "report",
-            "item_id": "it-1",
-            "status": "done",
-            "summary": "the worker reported",
-        },
-        src=GATEWAY,
-    )
+    report_data = {
+        "slot": conductor_slot,
+        "actor": "worker",
+        "by": worker_slot,
+        "action": "report",
+        "item_id": "it-1",
+        "status": "done",
+        "summary": "the worker reported",
+    }
+    report = worker.append("work/recorded", report_data, src=GATEWAY)
+    # The board's own copy, in the conductor's log, as the report route writes it.
+    conductor.append("work/recorded", report_data, src=GATEWAY)
 
     eager.note_commit("s-w-board", "work/recorded", int(report.seq), board=conductor_slot)
     assert eager.drain(timeout=10.0)
@@ -888,6 +878,11 @@ def test_an_entry_after_the_closer_leaves_its_fold_warm(monkeypatch):
     assert queued is not None, "the wakes were never queued"
     batch, closers, _taken = eager._coalesce(queued.get_nowait())
     eager._fold_batch(batch, closers)
+    # The drop left the cell cold, so the advance handed its fold to one background
+    # prime rather than folding every unit on the eager worker; wait for that prime.
+    from kiro_crew.crew_log import slot_prime
+
+    assert slot_prime.drain(timeout=30.0), "the background prime never finished"
 
     warm = {(key[1], key[2]) for key in crew_log._slot_memos}
     assert (slot, "work") in warm, (
@@ -928,6 +923,10 @@ def test_a_later_entry_of_another_type_does_not_hide_a_slot_folds_advance(monkey
     assert queued is not None, "the wakes were never queued"
     batch, closers, _taken = eager._coalesce(queued.get_nowait())
     eager._fold_batch(batch, closers)
+    # The cell was cold, so its fold went to one background prime.
+    from kiro_crew.crew_log import slot_prime
+
+    assert slot_prime.drain(timeout=30.0), "the background prime never finished"
 
     warm = {(key[1], key[2]) for key in crew_log._slot_memos}
     assert (slot, "work") in warm, (
@@ -964,6 +963,10 @@ def test_a_closer_in_the_same_batch_as_an_earlier_entry_still_drops_the_slot(mon
     assert queued is not None, "the wakes were never queued"
     batch, closers, _taken = eager._coalesce(queued.get_nowait())
     eager._fold_batch(batch, closers)
+    # A cold cell's fold goes to one background prime; wait for it.
+    from kiro_crew.crew_log import slot_prime
+
+    assert slot_prime.drain(timeout=30.0), "the background prime never finished"
 
     warm = {(key[1], key[2]) for key in crew_log._slot_memos}
     assert (slot, "work") not in warm, (
@@ -1033,6 +1036,10 @@ def test_a_workers_last_report_still_reaches_the_conductors_board_when_the_worke
     assert queued is not None, "the wakes were never queued"
     batch, closers, _taken = eager._coalesce(queued.get_nowait())
     eager._fold_batch(batch, closers)
+    # The board's cell was cold, so its fold went to one background prime.
+    from kiro_crew.crew_log import slot_prime
+
+    assert slot_prime.drain(timeout=30.0), "the background prime never finished"
 
     warm = {(key[1], key[2]) for key in crew_log._slot_memos}
     assert (conductor_slot, "work") in warm, (
@@ -1412,6 +1419,10 @@ def test_a_burst_pushes_once_per_board_rather_than_once_per_entry(pushed):
     assert queued is not None, "the wakes were never queued"
     batch, closers, _taken = eager._coalesce(queued.get_nowait())
     eager._fold_batch(batch, closers)
+    # A cold cell's fold goes to one background prime; wait for it.
+    from kiro_crew.crew_log import slot_prime
+
+    assert slot_prime.drain(timeout=30.0), "the background prime never finished"
 
     # The coalesce is per ``(slot, fold)``, so the bound is one frame PER FOLD that
     # declares the type -- three entries must not produce three frames for any of

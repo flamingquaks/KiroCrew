@@ -82,6 +82,7 @@ def _transcript(turns: int, *, size: int) -> list[dict]:
 _STABLE_TEXT = {
     "critical_rules": lambda: ctx._CRITICAL_RULES,
     "critical_rules_channel": lambda: ctx._CRITICAL_RULES_CHANNEL,
+    "critical_rules_subagent": lambda: ctx._CRITICAL_RULES_SUBAGENT,
     "member_how_you_work": lambda: ctx._MEMBER_HOW_YOU_WORK,
     # Item 7 included, because the ASSEMBLY includes it on this variant too: the
     # Dashboard tab is rendered from the instance store and does not depend on
@@ -105,6 +106,7 @@ _STABLE_TEXT_SHA256 = {
     "context_scope_all_withheld": "98ed04f8fca6f805d76f7fd3f518c63f221d5af6da6636fd30b28dc217207a0a",
     "critical_rules": "16827ce030089653769a3f16a6fb96e6c9fcda799ef4750630080011b5ac1647",
     "critical_rules_channel": "7b7ea4db70ccbc233959938b561281591e3b3c26544b383046942ce229eacf7e",
+    "critical_rules_subagent": "9eaa81827b3b0cb392286aa21837b6c17014e0abce484d2013150535102104c9",
     "docs_section": "971b6008afbd9ff048c498c06cffecc6dafc7a58b0df75ff9db0b15cf9e26c09",
     "member_how_you_work": "eaecc5424f7093f793bb68228cd9231752f7f0ba6c75204d6d7a392ad3dca3f1",
     "member_how_you_work_unavailable": "8b763af41df7bf48da8ac0e6080746273ea8fcf2e2239c4467e1958041adf02f",
@@ -375,7 +377,11 @@ def _session_context_member_mode(rig: _Rig) -> str:
 
 
 def _background_overflow(rig: _Rig) -> str:
-    """Protected preferences fill the allowance, so background is omitted by name."""
+    """Preferences larger than the whole background pool still leave it for background.
+
+    Preferences carry their own startup allowance, so they are not charged to the
+    pool and the activity, workspace and docs blocks are admitted.
+    """
     rig.seed_memory()
     rig.memory._preferences_file.write_text(
         "# Preferences\n" + "Keep this standing preference.\n" * 1_000,
@@ -513,12 +519,14 @@ _SCENARIOS = {
 #: recorded before the assembly moved into owners.
 _GOLDEN: dict[str, tuple[str, list[tuple[str, int]]]] = {
     "background_overflow": (
-        "2c4855e1f2a3372fb61f2d9abac311aeb1e524374c11dddea87a6e50d396f7e5",
+        "0ee1905bca3a3c831714e7ea6ff1b63c37f739d96b2d1c3846286110510837ef",
         [
-            ("unclassified", 173),
+            ("unclassified", 64),
             ("agent_identity", 25),
             ("surface", 197),
-            ("memory", 31487),
+            ("workspace_identity", 371),
+            ("docs_pointer", 235),
+            ("memory", 31813),
             ("memory_tools", 425),
             ("lessons", 179),
         ],
@@ -809,10 +817,10 @@ _GOLDEN: dict[str, tuple[str, list[tuple[str, int]]]] = {
         ],
     ),
     "subagent_scope": (
-        "d23ab1482b64c75cd64f60d870d0b716b94e0ff7d6fcaac9c8693cb2cec61620",
+        "4df13fdaeffbcf481322fbd7c75f970b3277969789fcf52fff12aeaacc00a8bc",
         [
             ("agent_instructions", 145),
-            ("session_wrapper", 296),
+            ("session_wrapper", 297),
             ("agent_identity", 25),
             ("surface", 195),
             ("context_scope", 249),

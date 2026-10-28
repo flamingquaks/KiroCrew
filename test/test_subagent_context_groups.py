@@ -292,3 +292,73 @@ class TestContextScopeMarker:
         assert "project (" in scope
         assert "memory (" not in scope
         assert "lessons (" not in scope
+
+
+class TestSubagentCriticalRules:
+    """A sub-agent's reply goes to its parent agent, not to a chat UI.
+
+    The channel variant tells the model to end choices with an [OPTIONS:] line
+    that "renders interactive buttons in the UI", which contradicts the spawn
+    prefix's "Do NOT include [OPTIONS: ...]" and makes children end reports
+    with button rows meant for a person.
+    """
+
+    _UI_CLAUSES = (
+        "you MUST end your response",
+        "renders interactive buttons",
+        "UI file viewer panel",
+        "click-to-copy chip",
+        "option label",
+        "the user can see what changed",
+    )
+
+    def test_subagent_key_gets_the_subagent_variant(self, tmp_path):
+        ctx = _builder(tmp_path).build_session_context(session_key="subagent:abc")
+        rules = context_module._CRITICAL_RULES_SUBAGENT
+        assert ctx.startswith(rules)
+        for clause in self._UI_CLAUSES:
+            assert clause not in rules, clause
+        assert "absolute path" in rules
+        assert "Do not assume anyone's gender." in rules
+
+    def test_other_runtimes_keep_their_variants(self):
+        assert context_module._critical_rules_for("dashboard:x", None) == (
+            context_module._CRITICAL_RULES
+        )
+        assert context_module._critical_rules_for("cron:x", None) == (
+            context_module._CRITICAL_RULES_CHANNEL
+        )
+
+    def test_subagent_rules_survive_marker_neutralization(self, tmp_path):
+        """build_message must recognise the new block as the trusted prefix,
+        otherwise its own [END CRITICAL RULES] marker is scrubbed."""
+        msg, _ = _builder(tmp_path).build_message(
+            "sub task",
+            True,
+            session_key="subagent:abc",
+            interactive=False,
+        )
+        # The final message folds the heading's em dash to "--", so check the
+        # body and the closing marker rather than the raw constant.
+        assert "Your reply goes to the agent that started you" in msg
+        assert "[END CRITICAL RULES]" in msg
+        assert "renders interactive buttons" not in msg
+
+
+class TestSessionContextOpener:
+    """The [SESSION CONTEXT] opener must not claim content the parent withheld."""
+
+    _CLAIM = "This is your memory, lessons, and conversation history"
+
+    def test_default_opener_names_memory_and_lessons(self, tmp_path):
+        msg, _ = _builder(tmp_path).build_message("q", True, "subagent:abc", interactive=False)
+        assert self._CLAIM in msg
+
+    def test_neutral_opener_when_every_group_is_withheld(self, tmp_path):
+        msg, _ = _builder(tmp_path).build_message(
+            "q", True, "subagent:abc", interactive=False, context_groups=frozenset()
+        )
+        assert self._CLAIM not in msg
+        assert "rules and runtime facts for this turn" in msg
+        assert "CURRENT USER REQUEST below" in msg
+        assert "[END OF SESSION CONTEXT]" in msg

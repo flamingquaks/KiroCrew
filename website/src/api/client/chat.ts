@@ -76,7 +76,10 @@ export function createChatEndpoints({ post, put, del, patch, j, jAccepted, jfetc
   const slotList = {
     // The look-preview frame (utils/lookPreview.ts) shows one demo session in
     // place of the user's own: fixtures answer both reads below.
-    chatSlots: () => isLookPreviewFrame() ? Promise.resolve(lookPreviewSlots()) : fetch('/api/chat/slots').then(j),
+    // `crew=all` keeps a Crew Mode root's workers in the answer: these reads look a
+    // session up by key (a worker opened from the side panel included); the
+    // person's own lists leave workers out on the client once the lists part lands.
+    chatSlots: () => isLookPreviewFrame() ? Promise.resolve(lookPreviewSlots()) : fetch('/api/chat/slots?crew=all').then(j),
     /** How many tabs this gateway's startup restore listed but could not show.
      *
      *  `reported: false` means the restore has not answered yet, which is not the
@@ -86,6 +89,29 @@ export function createChatEndpoints({ post, put, del, patch, j, jAccepted, jfetc
      *  measurement. It is reported, so the caller stops asking and says so. */
     chatSlotsUnrestored: (): Promise<{ reported: boolean; count: number; unknowable?: boolean }> =>
       fetch('/api/chat/slots/unrestored').then(j),
+  }
+
+  /** Close requests are ordered before a later send for the same slot until each
+   *  request settles. A set covers overlapping callers; resolved and rejected
+   *  closes both release their fence. */
+  const sideCloses = new Map<string, Set<Promise<void>>>()
+
+  const waitForSideClose = async (slot: string): Promise<void> => {
+    const pending = sideCloses.get(slot)
+    if (!pending?.size) return
+    await Promise.all([...pending])
+  }
+
+  const closeSide = (slot: string): Promise<{ ok: boolean; was_open: boolean }> => {
+    const close = post('/api/chat/slots/' + encodeURIComponent(slot) + '/side/close', { client: TAB_ID }).then(j) as Promise<{ ok: boolean; was_open: boolean }>
+    const pending = sideCloses.get(slot) ?? new Set<Promise<void>>()
+    const fence = close.then(() => undefined, () => undefined).then(() => {
+      pending.delete(fence)
+      if (pending.size === 0 && sideCloses.get(slot) === pending) sideCloses.delete(slot)
+    })
+    pending.add(fence)
+    sideCloses.set(slot, pending)
+    return close
   }
 
   const slots = {
@@ -155,6 +181,10 @@ export function createChatEndpoints({ post, put, del, patch, j, jAccepted, jfetc
     cancelQueuedMessage: (slot: string, queueId: string) => del('/api/chat/slots/' + encodeURIComponent(slot) + '/queue/' + encodeURIComponent(queueId)).then(j),
     editQueuedMessage: (slot: string, queueId: string, content: string) => patch('/api/chat/slots/' + encodeURIComponent(slot) + '/queue/' + encodeURIComponent(queueId), { content }).then(j),
     reorderQueuedMessages: (slot: string, order: string[]) => put('/api/chat/slots/' + encodeURIComponent(slot) + '/queue/order', { order }).then(j),
+    /** Take back a steer the running turn has not read yet (the row's `meta.mid`).
+     *  Resolves once the take-back is armed; what became of the steer lands on its
+     *  own row (`steerState`), which is where the caller reads the outcome. */
+    retractSteer: (slot: string, mid: string, action: 'unsend' | 'edit' | 'queue') => post('/api/chat/slots/' + encodeURIComponent(slot) + '/steers/' + encodeURIComponent(mid) + '/retract', { action }).then(j),
     interruptSlot: (slot: string, queueId?: string) => post('/api/chat/slots/' + encodeURIComponent(slot) + '/interrupt', queueId ? { queue_id: queueId } : {}).then(j),
     /** Ask the sleeping `wait` tool to return early. Cooperative, not a stop:
      *  the turn continues with a normal tool result. `waitId` must name the sleep
@@ -166,11 +196,14 @@ export function createChatEndpoints({ post, put, del, patch, j, jAccepted, jfetc
     forkChatSlot: (slot: string, atIndex?: number, prompt?: string, mode?: string, direction?: string, messageId?: string) => post('/api/chat/slots/' + encodeURIComponent(slot) + '/fork', { ...(atIndex !== undefined ? { at_message_index: atIndex } : {}), ...(messageId ? { at_message_id: messageId } : {}), ...(prompt ? { prompt } : {}), ...(mode ? { mode } : {}), ...(direction ? { direction } : {}) }).then(j),
     sideTools: () => fetch('/api/chat/side/tools').then(j) as Promise<{ read_only_tools: boolean; claude_adapter_outdated: boolean; claude_adapter_min_version: string; claude_adapter_update_command: string; config_unavailable: boolean }>,
     sideState: (slot: string) => fetch('/api/chat/slots/' + encodeURIComponent(slot) + '/side').then(j) as Promise<SideSnapshot>,
-    sideOpen: (slot: string) => post('/api/chat/slots/' + encodeURIComponent(slot) + '/side/open', {}).then(j) as Promise<{ ok: boolean; open: boolean; messages: number; last_run_id: string; created_at: string }>,
+    sideOpen: async (slot: string) => {
+      await waitForSideClose(slot)
+      return post('/api/chat/slots/' + encodeURIComponent(slot) + '/side/open', {}).then(j) as Promise<{ ok: boolean; open: boolean; messages: number; last_run_id: string; created_at: string }>
+    },
     sideTurn: (slot: string, question: string, opts?: { steer?: boolean }) => post('/api/chat/slots/' + encodeURIComponent(slot) + '/side/turn', { question, ...(opts?.steer ? { steer: true } : {}) }).then(jAccepted) as Promise<{ ok: boolean; run_id?: string; messages?: number; steered?: boolean; pending?: boolean; queued?: boolean; demoted?: boolean; queue_id?: string; still_queued?: boolean; depth?: number; steer_id?: string }>,
     sideQueueCancel: (slot: string, queueId: string) => del('/api/chat/slots/' + encodeURIComponent(slot) + '/side/queue/' + encodeURIComponent(queueId), { client: TAB_ID }).then(j) as Promise<{ ok: boolean; content: string; depth: number }>,
     sideQueueEdit: (slot: string, queueId: string, content: string) => patch('/api/chat/slots/' + encodeURIComponent(slot) + '/side/queue/' + encodeURIComponent(queueId), { content }).then(j) as Promise<{ ok: boolean; depth: number }>,
-    sideClose: (slot: string) => post('/api/chat/slots/' + encodeURIComponent(slot) + '/side/close', {}).then(j) as Promise<{ ok: boolean; was_open: boolean }>,
+    sideClose: closeSide,
     sideStop: (slot: string) => post('/api/chat/slots/' + encodeURIComponent(slot) + '/side/stop', {}).then(j) as Promise<{ ok: boolean }>,
     chatMode: (mode: string, slot?: string) => post('/api/chat/mode', { mode, slot: slot || '' }).then(j),
     generateTitle: (slot: string) => post('/api/chat/slots/' + encodeURIComponent(slot) + '/generate-title').then(j),

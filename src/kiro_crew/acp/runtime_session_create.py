@@ -34,7 +34,7 @@ from kiro_crew.acp._dispatch import (
     build_session_new_params,
     parse_session_modes,
 )
-from kiro_crew.acp.kas_agents import hoist_managed_servers
+from kiro_crew.acp.kas_agents import hoist_servers_for_session
 from kiro_crew.acp.runtime_session_setup import (
     _disable_check_scope,
     _pooled_session_servers_and_ref_spec,
@@ -317,12 +317,15 @@ async def create_session(
     # The generation the wire payload was built from, or None when this host takes its
     # agent at spawn time. Consumed by the activation bracket below.
     payload_snapshot = kas_extras.derived_spec_snapshot
+    # The vault identity the request goes out under, for the KAS catalog recorder;
+    # read by the harness with the payload, ``""`` on every host but KAS.
+    request_identity = kas_extras.vault_identity
     # Crew's managed servers travel in the session-level array, the one
     # declaration site the captured 2.18.0 release honours over a same-named
     # global/workspace entry and 2.20.0 reports as the client's own (see
-    # ``hoist_managed_servers``). The kiro path returns None here and is
+    # ``hoist_servers_for_session``). The kiro path returns None here and is
     # untouched.
-    kas_agents, mcp_servers = hoist_managed_servers(
+    kas_agents, mcp_servers = hoist_servers_for_session(
         kas_agents, active_agent, mcp_servers, session_token=stub_token
     )
     # The host's last word on its own tool surface. A host that reads an
@@ -442,6 +445,7 @@ async def create_session(
             session_key=session_key,
             member_dispatch_mounted=member_mounted,
             request_sent_at=request_sent_at,
+            request_identity=request_identity,
         )
         if collector is None:
             permit.release()
@@ -476,6 +480,7 @@ async def create_session(
         session_key=session_key,
         member_dispatch_mounted=member_mounted,
         request_sent_at=request_sent_at,
+        request_identity=request_identity,
     )
 
 
@@ -504,6 +509,7 @@ def _collect_late_start(
     session_key: str = "",
     member_dispatch_mounted: bool = False,
     request_sent_at: float | None = None,
+    request_identity: str = "",
 ) -> StartCollector | None:
     """Hand a timed-out ``session/new`` to a :class:`StartCollector`.
 
@@ -590,6 +596,7 @@ def _collect_late_start(
                 session_key=session_key,
                 member_dispatch_mounted=member_dispatch_mounted,
                 request_sent_at=request_sent_at,
+                request_identity=request_identity,
             )
             # A declining (or raising) adopter answers False and the
             # collector performs the one teardown.
@@ -653,6 +660,7 @@ async def _finish_create_session(
     session_key: str = "",
     member_dispatch_mounted: bool = False,
     request_sent_at: float | None = None,
+    request_identity: str = "",
 ) -> AcpSessionHandle:
     """Everything after a successful ``session/new``: queue, handle, mode, drain.
 
@@ -702,6 +710,9 @@ async def _finish_create_session(
     if self._mirrored_spec_check_needed(mirrored_snapshot):
         await self._require_unchanged_mirrored_spec(session_id, mirrored_snapshot)
 
+    # The vault identity the request went out under, read by the KAS catalog
+    # recorder inside ``store_session_config``; see the handle's field.
+    handle.request_vault_identity = request_identity
     # Populate state from session/new response (configOptions, available models)
     handle.store_session_config(resp)
     # Both halves of that snapshot are now known, which is what makes the

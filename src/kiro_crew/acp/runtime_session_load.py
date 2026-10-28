@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from kiro_crew.acp._dispatch import attach_kas_custom_agents, parse_session_modes
-from kiro_crew.acp.kas_agents import hoist_managed_servers
+from kiro_crew.acp.kas_agents import hoist_servers_for_session
 from kiro_crew.acp.mcp_session_report import (
     active_custom_agent,
     required_managed_servers,
@@ -256,6 +256,7 @@ async def load_session(
     # compares against it rather than re-reading the file.
     kas_agents = None
     payload_snapshot = None
+    request_identity = ""
     if self._acp_backend == ACP_BACKEND_KAS:
         kas_extras = await self._kas_custom_agents(
             active_agent,
@@ -266,16 +267,19 @@ async def load_session(
         )
         kas_agents = kas_extras.custom_agents
         payload_snapshot = kas_extras.derived_spec_snapshot
+        # Mirrors create_session: the vault identity the request goes out under,
+        # for the KAS catalog recorder (a load echoes the select too).
+        request_identity = kas_extras.vault_identity
         # Same carriage as create_session: a resumed session re-initializes
         # its servers, and the managed ones must win the same-name contest
-        # on load exactly as they did on new.  ``resume=True`` additionally
-        # hoists user-declared (non-managed) servers: on session/load kiro-cli
-        # re-initialises servers from the session-level array only -- agent-block
-        # declarations are re-registered but not re-launched -- so spec edits
-        # adding new MCP servers would be silently ignored without this.
+        # on load exactly as they did on new.  ``include_user_servers=True``
+        # additionally hoists user-declared (non-managed) servers: on session/load
+        # kiro-cli re-initialises servers from the session-level array only --
+        # agent-block declarations are re-registered but not re-launched -- so spec
+        # edits adding new MCP servers would be silently ignored without this.
         # session/new (create_session) is unchanged: kiro-cli reads agent-block
-        # servers on its own there, and hoist_managed_servers default (False) does
-        # not widen that path.
+        # servers on its own there, and hoist_servers_for_session's default
+        # (include_user_servers=False) does not widen that path.
         #
         # A user-declared name that a settings file kiro-cli reads (the global
         # ~/.kiro/settings/mcp.json or the checkout's .kiro/settings/mcp.json)
@@ -286,12 +290,12 @@ async def load_session(
         # settings file from cwd whatever level its agent spec resolves at.
         # Read off the loop thread like the other settings reads here.
         reserved = await asyncio.to_thread(settings_server_names, session_work_dir)
-        kas_agents, mcp_servers = hoist_managed_servers(
+        kas_agents, mcp_servers = hoist_servers_for_session(
             kas_agents,
             active_agent,
             mcp_servers,
             session_token=stub_token,
-            resume=True,
+            include_user_servers=True,
             reserved_names=reserved,
         )
         # REBIND, not just re-assign the param: the hoist changes the array, and
@@ -376,6 +380,7 @@ async def load_session(
     self._harness.record_session_projection(handle, kas_agents, active_agent)
     if self._mirrored_spec_check_needed(mirrored_snapshot):
         await self._require_unchanged_mirrored_spec(resume_sid, mirrored_snapshot)
+    handle.request_vault_identity = request_identity
     handle.store_session_config(resp)
     # session/load echoes ``currentModelId`` exactly like session/new, and a
     # session persisted before the account's served list changed can come

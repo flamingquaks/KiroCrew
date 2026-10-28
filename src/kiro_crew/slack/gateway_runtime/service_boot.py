@@ -889,11 +889,29 @@ async def run(self: GatewayOrchestrator) -> None:
     self._init_mcp_discovery()
     self._init_subagents()
     self._init_task_runner()
-    if not self._no_dashboard:
-        await self._init_dashboard()
-        self._announce_cron_quarantine()
-    else:
-        await self._init_api_server()
+    try:
+        if not self._no_dashboard:
+            await self._init_dashboard()
+            self._announce_cron_quarantine()
+        else:
+            await self._init_api_server()
+    finally:
+        # The surface the boot orphan sweep's notices go to is up: the dashboard
+        # has restored the parents' tabs, or the API-only server (no tabs) is
+        # listening. A start that failed releases them too, so the sweep can
+        # still send the owner DM digest; if the process exits first, the runs
+        # stay untombstoned and the next start announces them.
+        if self.subagent_mgr is not None:
+            self.subagent_mgr.release_orphan_notices()
+    # The socket is bound. Move the boot heap into the permanent generation so
+    # later full collections stop re-scanning it (~150k objects, a 50 ms
+    # stop-the-world pass on the event loop), then turn cyclic GC back on:
+    # `kirocrew gateway` imports with it off (kiro_crew._bootstrap.main).
+    # O(1), and deliberately no gc.collect() first: that is a blocking pass.
+    import gc
+
+    gc.freeze()
+    gc.enable()
     # The dashboard/API socket is bound now. A missing wrapper can take the
     # full pip timeout to repair, so track that work without delaying READY.
     # The task itself catches and logs failures; startup remains available.
@@ -1395,8 +1413,6 @@ async def run(self: GatewayOrchestrator) -> None:
     # event loop.
     await asyncio.get_running_loop().run_in_executor(subprocess_executor(), check_bundle_freshness)
 
-    print("👻 Kiro Crew gateway starting…")
-
     connected = await self._connect_slack()
     # Record the real socket outcome so status surfaces (e.g. the Slack
     # settings badge) can distinguish "connected" from "tokens present
@@ -1422,6 +1438,10 @@ async def run(self: GatewayOrchestrator) -> None:
         _scope_task.add_done_callback(self._background_tasks.discard)
         _scope_task.add_done_callback(log_probe_failure)
 
+    # Boot is finished here: the dashboard is bound and the process serves until
+    # it is stopped. This is the last line a foreground gateway prints, so it
+    # must not read as a step still in progress.
+    print("👻 Kiro Crew gateway running — press Ctrl+C to stop")
     await shutdown_event.wait()
     await self._shutdown_and_exit(_watchdog)
 

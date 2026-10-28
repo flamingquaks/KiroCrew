@@ -56,6 +56,7 @@ from kiro_crew.acp.types import (
     EVENT_MCP_SERVER_INIT_FAILURE,
     EVENT_MCP_SERVER_INITIALIZED,
     EVENT_STEER_CONSUMED,
+    EVENT_STEER_DROPPED,
     STOP_CLASS_FAILED,
     STOP_REASON_CANCELLED,
     STOP_REASON_COMPACTION_FAILED,
@@ -77,6 +78,7 @@ from kiro_crew.acp_backends import (
     ACP_BACKEND_KIRO,
     ACP_BACKENDS_COMPACT,
     ACP_BACKENDS_LOCAL_CLEAR,
+    ACP_BACKENDS_LOCAL_HARNESS_COMMANDS,
     Routing,
     routing_for,
 )
@@ -214,6 +216,7 @@ from kiro_crew.dashboard.chat_turn.slash_commands import (
 from kiro_crew.dashboard.chat_turn.steer_queue import (  # noqa: F401
     _has_user_queued_followup,
     _on_steer_consumed,
+    _on_steer_dropped,
     _requeue_unconsumed_steers,
 )
 from kiro_crew.dashboard.chat_turn.stop_recovery import (
@@ -241,6 +244,7 @@ from kiro_crew.dashboard.chat_turn.turn_dispatch_gates import (
 from kiro_crew.dashboard.chat_turn.turn_ending import _turn_ending_chain
 from kiro_crew.dashboard.chat_turn.turn_entry import (
     _stop_pressed,
+    _turn_flush_file_changes,
     _turn_open,
     _turn_release_handles,
 )
@@ -271,6 +275,7 @@ from kiro_crew.dashboard.chat_turn.turn_stats import (  # noqa: F401
 from kiro_crew.dashboard.chat_utils import (  # noqa: F401
     _BLOCKED_SLASH_COMMANDS,
     _MAX_TOOL_PURPOSE,
+    BLOCKED_LINKS_ORDERED_KEY,
     _dequeue_next_message,
     _dequeue_next_system_message,
     _maybe_consolidate,
@@ -326,7 +331,10 @@ from kiro_crew.dashboard.state import (  # noqa: F401
     build_stale_recovery_prompt,
     context_entry_expired,
 )
-from kiro_crew.dashboard.steer_settle import settle_consumed_steers
+from kiro_crew.dashboard.steer_settle import (
+    possibly_consumed_steers,
+    settle_consumed_steers,
+)
 from kiro_crew.dashboard.turn_dispatch import (
     spawn_guarded_turn,
     tool_approval_timeout_secs,
@@ -1004,6 +1012,8 @@ async def _run_chat(
                 continue
             elif event.kind == EVENT_STEER_CONSUMED:
                 await _on_steer_consumed(turn, event)
+            elif event.kind == EVENT_STEER_DROPPED:
+                await _on_steer_dropped(turn, event)
             elif event.kind == EVENT_COMPACTION_STATUS:
                 await _on_compaction_status(turn, event)
             elif event.kind == EVENT_CLEAR_STATUS:
@@ -1167,6 +1177,7 @@ async def _run_chat(
         await _turn_record_outcome(turn)
         await _turn_close_crew_log(turn)
         await _turn_release_handles(turn)
+        _held_flush_cancel = await _turn_flush_file_changes(turn)
         await _turn_settle_debts(turn)
         await _turn_release_session(turn)
         # Retire the in-flight marker once every transcript mutation is complete
@@ -1186,8 +1197,12 @@ async def _run_chat(
         # The per-exit duties and the queue hand-off, in their one order. Run to
         # completion: a cancel landing inside the tail (a turn deadline during
         # the deferred-reset consume) is deferred until the hand-off ran, then
-        # re-raised, so the queue is never left behind a finished task.
+        # re-raised, so the queue is never left behind a finished task. A cancel
+        # the file-change flush in _turn_flush_file_changes held resurfaces here,
+        # once the hand-off has run, for the same reason.
         await run_to_completion(_end_turn_tail(state, slot, turn_exit))
+        if _held_flush_cancel is not None:
+            raise _held_flush_cancel
 
 
 # Every function the owners define runs on this module's globals, so a patch of

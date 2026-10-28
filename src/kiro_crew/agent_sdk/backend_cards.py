@@ -372,6 +372,14 @@ OFF_CARD_SETS: Mapping[str, str] = {
         "wire spec. The worker gets the same prompt either way, so there is nothing "
         "for a user choosing a harness to weigh"
     ),
+    "ACP_BACKENDS_STEER_RETRACT": (
+        "whether a pending steer can be taken back (the dashboard's Unsend, Edit and "
+        "Queue instead). The steer itself is the mid-turn-steer line's claim, and these "
+        "controls are drawn only on a steer the running harness can take back, so no "
+        "reader is promised an undo the harness lacks. A wrong membership offers a "
+        "control whose clear names nothing, which leaves the steer to run, and is a "
+        "defect"
+    ),
     "ACP_BACKENDS_SERIAL_SESSION_STARTS": (
         "which backend's process answers session starts and mode switches one at a "
         "time. It decides only what a timed-out start's error says about the "
@@ -407,6 +415,14 @@ OFF_CARD_SETS: Mapping[str, str] = {
         "choosing a harness loses nothing. A wrong membership either sends /clear "
         "to the model as text, or answers a harness that would have run it, which "
         "is a defect"
+    ),
+    "ACP_BACKENDS_LOCAL_HARNESS_COMMANDS": (
+        "whether the dashboard answers every harness command itself and leaves the "
+        "ones it cannot serve out of the / menu. It names a harness with no command "
+        "channel rather than a feature a reader gains, and the commands that matter "
+        "for choosing a harness already have lines of their own. A wrong membership "
+        "either hides commands a harness would have run, or offers rows that only "
+        "ever reach the model as text, which is a defect"
     ),
     "ACP_BACKENDS_HOOKS_LIST": (
         "which backend's agent may ask its client for the hooks matching a trigger, and "
@@ -504,6 +520,13 @@ OFF_CARD_SETS: Mapping[str, str] = {
         "asking the registry about a harness whose model ids it does not carry hides a "
         "control that works, and asking the option on a harness whose level rides the "
         "model offers one the model will refuse"
+    ),
+    "ACP_BACKENDS_AGENT_STARTED_TURNS": (
+        "whether a turn the agent starts on its own between prompts is read when it "
+        "happens. It is a transport detail of one adapter, not a choice a reader "
+        "makes: a member missing from it shows that turn under the next message, and "
+        "a harness added without the end-of-turn marker holds its slot until the "
+        "stale-turn gate or the prompt timeout, so either wrong membership is a defect"
     ),
     "ACP_BACKENDS_SEED_LOCAL_SETTINGS": (
         "whether a settings file is re-seeded on a model switch. Invisible when "

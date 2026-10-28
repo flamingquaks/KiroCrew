@@ -102,6 +102,7 @@ from kiro_crew.config.memory_sections import (  # noqa: F401
 )
 from kiro_crew.config.resolution import _OBSERVED_DEGRADED_SECTIONS, DEGRADED_TAILSCALE
 from kiro_crew.config.sections_agent import (  # noqa: F401
+    _CREW_MODE_AGENT_DEFAULT,
     _YOLO_DURATION_DEFAULT,
     AgentConfig,
     _read_skip_permissions,
@@ -318,6 +319,7 @@ from kiro_crew.config.sections_limits import (  # noqa: F401
     TITLE_REFRESH_EVERY_TURNS_MIN,
     TOOL_APPROVAL_TIMEOUT_MAX,
     TOOL_APPROVAL_TIMEOUT_MIN,
+    TRANSLUCENT_PANELS_VALUES,
     UPLOAD_MAX_MB_MAX,
     UPLOAD_MAX_MB_MIN,
     AutocompactPctError,
@@ -429,8 +431,10 @@ from kiro_crew.config.service_sections import (  # noqa: F401
     HeartbeatConfig,
     MessagingConfig,
     MonitoringConfig,
+    PowerConfig,
     TaskRunnerConfig,
     WatchdogConfig,
+    WorkLedgerConfig,
 )
 from kiro_crew.constants import DEFAULT_SPAWN_MIN_MEMORY_GB as _DEFAULT_SPAWN_MIN_MEMORY_GB
 from kiro_crew.constants import DEFAULT_SUBAGENT_COST_GB as _DEFAULT_SUBAGENT_COST_GB

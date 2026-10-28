@@ -484,6 +484,13 @@ class TestSynthesisAfterAOneTurnBatch:
         await self._complete(on_done, slot, "a1", busy=busy)
         assert slot._pending_synthesis is True, "the arm itself is unchanged"
 
+        if busy:
+            # The blocker's turn end finds the completion still queued: the
+            # gate holds and the completion drains as its own turn.
+            assert await self._turn_end(state, slot) is False
+            assert slot._queue == [], "the queued completion was drained"
+            assert slot._pending_synthesis is True, "held, not judged, while it was queued"
+            slot.task = None
         assert await self._turn_end(state, slot) is False
         assert slot._pending_synthesis is False, "the arm is consumed, not left for later"
 
@@ -605,7 +612,6 @@ class TestSubagentDone:
     async def test_dashboard_slot_idle_triggers_run_chat(self):
         """Subagent done → dashboard slot idle → _run_chat."""
         orch, mock_sm = self._setup_orch_with_subagent_mgr()
-        # Get the on_done callback
         on_done = mock_sm.call_args[1]["on_done"]
 
         slot = MagicMock()

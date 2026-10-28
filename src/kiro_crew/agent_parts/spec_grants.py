@@ -103,9 +103,8 @@ _MATE_AUTO_GRANTS = (
 #: the person arranged and would have to reconstruct by hand. Creation is otherwise
 #: recoverable clutter; mutation of what the user arranged is not.
 #:
-#: Both granted creation verbs earn half 2 from a server ceiling, and BOTH ceilings
-#: were added by this change — neither verb was safe to auto-approve as the code
-#: stood:
+#: Both granted creation verbs earn half 2 from a server ceiling — without its
+#: ceiling neither verb is safe to auto-approve:
 #:
 #: * ``chat_folder_create`` had no bound at all, so a loop grew durable on-disk
 #:   state without limit. Now ``MAX_CHAT_FOLDERS``, tested under the folder lock.
@@ -239,6 +238,9 @@ _MATE_AUTO_GRANTS = (
 #:   session's turn forward (the target's ``wait`` returns early), which is a
 #:   change to state that is not the caller's own, and no conductor step needs it
 #:   unattended.
+#: * ``session_set_color`` — WITHHELD. Writes a session other than the
+#:   caller's (its sidebar tint). The route confines it to sessions the
+#:   caller created and refuses the caller's own, but no conductor step needs it.
 #: * ``session_reload`` — WITHHELD. Tears down another session's agent process
 #:   and relaunches it. The conversation survives, but a reload is still a
 #:   process-level action on a session a person may be watching, and no

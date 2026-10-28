@@ -123,6 +123,10 @@ use:
   new read family gets an owner of its own; a name both projections need goes
   to `history_projection_contract.py`. `test/test_history_projection_facade.py`
   pins the owners, the exception's module, the logger and the patch reach.
+  `history_page_index.py` is such an owner, outside the facade: it keeps the
+  bounded-page index base on disk and carries it across first-line rewrites
+  (see "Bounded transcript pages"), and the reads owner imports it inside the
+  functions that use it, so the facade serves none of its names.
 - `history_rewrite.py` owns locked compaction rewrites and size-based rotation.
 - `history_consolidation.py` defines `HistoryConsolidator` (construction,
   `reconfigure`, retry accounting, off-loop counting and every scheduling entry
@@ -211,11 +215,26 @@ that scan (`_page_index_base`: device, inode, the record boundary it stopped at,
 a blake2b digest of the 4 KiB before the boundary, the row count and the
 checkpoints) across invalidation, because `ConversationLog.append` invalidates on
 every write and the file only grows by appends. The scan resumes only when the
-open handle it is about to read has the same device and inode, is longer than the
-boundary, and has the same digest before the boundary; it then scans only the
-appended rows. Compaction, rotation and metadata updates replace the file through
-`atomic_write` (a new inode), so they always rebuild from byte zero, and a final
-row without a line terminator is never used as a boundary. The premise is that
+open handle it is about to read has the same device and inode, is at least as long
+as the boundary (equal means nothing was appended, and nothing is scanned), and has
+the same digest before the boundary; it then scans only the appended rows. A final
+row without a line terminator is never used as a boundary.
+
+The base also survives a restart and a first-line rewrite
+(`kiro_crew.history_page_index`). For a transcript of 256 KiB or more it is
+persisted to `<transcripts>/.page-index/<file>.json` after a build, and again after
+each further 256 KiB; a read with no usable in-memory base loads it, checks its
+shape, and applies the same handle re-check, so a stale or damaged sidecar costs one
+rebuild and never a wrong page. `delete_session` removes it. The metadata-line
+writers (`update_metadata`, `clear_closed`, `mark_consolidated`,
+`advance_consolidation_sub_offset`) replace the file through `atomic_write` (a new
+inode) and then move the base onto the new file, shifting every offset by the first
+line's change in length, only when that is proven: both first lines end in a
+newline, the bytes after them are the same length in both files (which rules out a
+text read's newline translation), the base names the old file with every offset past
+its first line, and the 4 KiB before the moved boundary in the new file hash to the
+saved digest. Compaction, rotation and body rewrites change rows, so they rebuild
+from byte zero. The premise is that
 product writes are `O_APPEND` appends or atomic replaces; an in-place edit that
 keeps the inode and the 4 KiB before the old end and also lengthens the file would
 not be noticed. A key with
@@ -232,8 +251,10 @@ members yields a row is served from the key's own file); there is no second
 lineage model, and a chain whose membership changes during a page read is treated
 as a revision change.
 
-The index stores counts and offsets only, never message content, and never crosses
-a process boundary or trusts agent-writable derived state. In-memory validity
+The index stores counts and offsets only, never message content. The persisted base
+is trusted no further than the in-memory one: it sits beside the transcript with the
+same permissions, every row a page returns is decoded from the transcript itself,
+and a writer able to forge it can rewrite the transcript directly. In-memory validity
 requires the full file stamp (`mtime_ns`, `ctime_ns`, size, inode, device) and the process-wide
 history invalidation generation. An unpinned page read whose revision changes
 mid-read is retried once; a read pinned to an `expected_revision` is not, since
@@ -344,7 +365,7 @@ The hook is a facade over composed owners, each holding one responsibility:
 | Owner (`website/src/hooks/virtualizer/`) | Owns |
 |---|---|
 | `useVirtualChat.ts` | option wiring, row identity (display key, stable id, alt id), and the hook-call order the owners depend on |
-| `windowRange.ts` | the mounted window as the reader scrolls: the scroll recompute and its merge, the near/far jump rule behind `mountIndex`, sentinel expansion, the coverage watchdog, the older-history index trigger. A placement that moves the scroller (follow's tail and jump, a prepend rebase, the reading position's entry, visibility and restore) mounts its own window from its owner, through the same window math |
+| `windowRange.ts` | the mounted window as the reader scrolls: the scroll recompute and its merge, the near/far jump rule behind `mountIndex`, sentinel expansion, the coverage watchdog, the older-history index trigger, and the tail-append mount (rows appended under a followed reader join the window in the render that first sees them, so they never commit as estimate-priced spacer). A placement that moves the scroller (follow's tail and jump, a prepend rebase, the reading position's entry, visibility and restore) mounts its own window from its owner, through the same window math |
 | `measurement.ts` | the per-scope `HeightIndex`, the spacer geometry read from it, and every measurement writer (resize observer, row ref seed, measure farm), each gated on the caller's `canMeasure` so a width-transition measurement never lands in the old scope, plus the mounted-row reseed a scope change runs after the reading-position restore. Only the cache WRITE stands down for the gate: the observer classifies every fire (first mount vs resize, the above-fold delta the compensation adds to scrollTop) against the height the DOM last showed for that node, tracked per mounted element apart from any scope, so a re-wrap during the transition is compensated once and a repeated fire adds nothing. The write a fire makes is the RESIDUAL for the reader's row — the row seen highest among those reaching below the fold at the last frame the reader saw — between where it is after layout and where it was last seen (moved by its own credited change: a re-wrapped straddler keeps its bottom, an appending or in-place one its top), never the batch's summed growth: Chromium's native scroll anchoring adjusts scrollTop during the reprice layout, before any observer callback, so the summed growth was paid twice there and a row native pushed under the fold read as straddling. Row positions are re-read at scroll events and seeds (the last painted frame), carried arithmetically by a fire's own write, and never re-read at the end of a fire (a layout is delivered over several callbacks). The record cannot be stale against the reader's own input: a user scroll reaches scrollTop at the start of a rendering update and dispatches its scroll event in that update's scroll steps, before layout and the observer, so the record is refreshed before any rect the fire reads; only a row that is no longer mounted stands the write down (a click or key that scrolls nothing leaves the record valid). The scope reseed announces immediately rather than through the debounce, so the cold owner's estimate spacer is replaced in the swap commit's layout phase |
 | `geometryScheduling.ts` | when a measurement becomes geometry: the debounced sync, its deferral while the reader moves, the streaming row's immediate path, the rail-collapse window |
 | `shiftCompensation.ts` | holding a scrolled-up reader still across prepends, splices, window shifts in either direction (rows mounting above the reader are re-priced from the estimate; rows unmounting above them are replaced by a spacer the tree prices, which is short by every re-wrap the tree has not been allowed to learn during a width transition), appends, height syncs and the width-scope swap, and planning which row measurements a commit retires. The swap: the settled bucket's cold owner re-prices the before-spacer from estimates in the render that constructs it, so a same-session swap over an unchanged list captures the reader's row render-phase into the height-sync slot; the consumer is keyed on the owner's identity as well as its announced version (two owners can report equal versions) and stands down on the swap commit itself, leaving the capture for the reseed's announcement in that commit's layout phase, which is where the committed spacer it must be paid against exists. That stand-down also reads the engine's RANGE CLAMP: the cold document prices every unmounted row at the flat estimate, so it can be shorter than the reader's scrollTop, and the engine then drags scrollTop to its ceiling (`scrollHeight - clientHeight`) with no application write anywhere and leaves it there when the reseed grows the document back (Firefox and Chromium alike at a matched depth; a shallower reader never reaches the ceiling). When the pending capture's scrollTop is above that ceiling and the live scrollTop is exactly the ceiling (within `SELF_SCROLL_EPSILON`), the capture is re-based to the clamped value with its candidates' painted geometry kept, so the reseed pays the whole move; a drop that is not the ceiling (native anchoring's spacer-delta move) is left alone, and any movement after the clamp still differs from the re-based value, so the scrollTop freshness guard still drops the capture. A followed reader keeps the tail pin; a true session switch captures nothing |
@@ -521,8 +542,8 @@ and is suppressed by transcript renderers. Its `ts` also counts as owner
 presence when the next return measures time away. The deterministic opener row and
 the model-written result carry normal mate message roles and classes. The
 result row's `meta.brief` holds the validated, redacted fields (`status`,
-`headline`, `asked`, `remaining`, `done`, `needs_you`, `next`, `extra`, and the
-gateway-counted `progress`; an older row holds `asked`, `now`, `needs_you` and
+`headline`, `asked`, `remaining`, `done`, `needs_you`, `next`, `extra`, `body`,
+an optional HTML `widget`, and the gateway-counted `progress`; an older row holds `asked`, `now`, `needs_you` and
 `next`) that the transcript draws as a fixed plain-text card; its
 `content` is the same brief as plain text, for export and any reader without
 the card.

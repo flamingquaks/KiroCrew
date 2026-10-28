@@ -19,7 +19,7 @@
       "label": "Update the gateway automatically",
       "tab": "about",
       "route": "/settings/about?highlight=key%3Aauto_update",
-      "description": "Installs a new release once no work is running and restarts the gateway, on installs that can update themselves.",
+      "description": "Restarts the gateway to install a new release once no work is running. When off, it stays on its current version.",
       "configKey": "auto_update"
     },
     {
@@ -721,7 +721,7 @@
       "label": "Prevent sleep while running",
       "tab": "chat",
       "route": "/settings/chat/advanced?highlight=key%3Adashboard.prevent_sleep",
-      "hint": "Keep your computer awake while a task is running",
+      "hint": "Keep your computer awake while a task is running. On some Windows laptops (Modern Standby), locking the screen can still let it sleep, so keep the screen on for long tasks.",
       "configKey": "dashboard.prevent_sleep"
     },
     {
@@ -792,7 +792,7 @@
       "label": "Show Full Titles While Scrolling",
       "tab": "chat",
       "route": "/settings/chat/sessions?highlight=chat.show-full-titles-while-scrolling",
-      "hint": "While you scroll the session list, titles the sidebar cuts off show in full"
+      "hint": "While you scroll the session list, cut-off titles show in full"
     },
     {
       "id": "chat.show-pasted-text-in-full",
@@ -1129,6 +1129,13 @@
       "description": "Uses the KAS engine version this Kiro Crew release was tested with, instead of the Kiro CLI. Applies to every new session on this Kiro Crew, not just this device. Signs in with your Kiro account from Settings → Agent Harness. Takes effect when Kiro Crew restarts."
     },
     {
+      "id": "developer.session-environments",
+      "label": "Session Environments",
+      "tab": "developer",
+      "route": "/settings/developer?highlight=developer.session-environments",
+      "description": "Shows the Session Environments settings. Existing chats stay on this machine; a chat moves only if you pick a profile for it before its first message."
+    },
+    {
       "id": "developer.webhooks",
       "label": "Webhooks",
       "tab": "developer",
@@ -1241,6 +1248,13 @@
       "tab": "display",
       "route": "/settings/display/view?highlight=display.interface",
       "hint": "Chat bubbles or CLI-style line-by-line output"
+    },
+    {
+      "id": "display.keep-running-in-the-background-after-closing-the-window",
+      "label": "Keep running in the background after closing the window",
+      "tab": "display",
+      "route": "/settings/display/view?highlight=display.keep-running-in-the-background-after-closing-the-window",
+      "description": "Closing the window hides Kiro Crew and keeps your sessions and jobs running. Turn this off to make the close button quit the app. A gateway this app started stops with it, and a gateway it only connects to keeps running."
     },
     {
       "id": "display.language",
@@ -1359,7 +1373,7 @@
       "label": "Notify me even when Kiro Crew is closed",
       "tab": "notifications",
       "route": "/settings/notifications/alerts?highlight=notifications.notify-me-even-when-kiro-crew-is-closed",
-      "description": "A separate switch from system notifications above, which only work while Kiro Crew is open."
+      "description": "Sends alerts to this device even after you close Kiro Crew. System notifications stop once you close it."
     },
     {
       "id": "notifications.notify-when-a-background-chat-finishes",
@@ -1511,6 +1525,35 @@
       "description": "Add your own deny patterns (Python-compatible regex). These are enforced at {{productName}}'s PreToolUse gate alongside the built-in rules."
     },
     {
+      "id": "session-environments.coder-url",
+      "label": "Coder URL",
+      "tab": "session-environments",
+      "route": "/settings/session-environments?highlight=key%3Asession_environments.coder_url",
+      "description": "Use the deployment URL without credentials, query parameters, or fragments, for example https://coder.example.com.",
+      "configKey": "session_environments.coder_url"
+    },
+    {
+      "id": "session-environments.default-for-new-chats",
+      "label": "Default for new chats",
+      "tab": "session-environments",
+      "route": "/settings/session-environments?highlight=session-environments.default-for-new-chats",
+      "description": "New chats you start in the dashboard run here unless you pick another profile in the “Run this chat on” menu before the first message. Existing chats, scheduled jobs and channel conversations keep running where they do now."
+    },
+    {
+      "id": "session-environments.start-new-chats-on-a-profile",
+      "label": "Start new chats on a profile",
+      "tab": "session-environments",
+      "route": "/settings/session-environments?highlight=key%3Asession_environments.default_profile",
+      "configKey": "session_environments.default_profile"
+    },
+    {
+      "id": "session-environments.stop-workspaces-when-kiro-crew-shuts-down",
+      "label": "Stop workspaces when Kiro Crew shuts down",
+      "tab": "session-environments",
+      "route": "/settings/session-environments?highlight=key%3Asession_environments.stop_on_shutdown",
+      "configKey": "session_environments.stop_on_shutdown"
+    },
+    {
       "id": "shortcuts.enable-shortcuts",
       "label": "Enable shortcuts",
       "tab": "shortcuts",
@@ -1593,8 +1636,7 @@
       "id": "voice.aws-region-transcribe",
       "label": "AWS Region (Transcribe)",
       "tab": "voice",
-      "route": "/settings/voice?highlight=voice.aws-region-transcribe",
-      "description": "AWS region for Transcribe"
+      "route": "/settings/voice?highlight=voice.aws-region-transcribe"
     },
     {
       "id": "voice.custom-model-file",

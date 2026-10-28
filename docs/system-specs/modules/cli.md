@@ -80,7 +80,7 @@ to the facade's `_OWNERS`, to `OWNERS` in that test and to `_BANNED_AFTER_CLI_IM
 `test/test_cli_lazy_imports.py`.
 
 `kiro_crew/cli_server.py` holds the server-lifecycle commands `main()` dispatches to. It
-keeps `file-delivery approve`, `status`, `gateway`, `run`, `service`, `sandbox` and `logs`;
+keeps `status`, `gateway`, `run`, `service`, `sandbox` and `logs`;
 the gateway peer proof, the owner requests (`token`, `logout`, `update approve`), `stop`,
 `restart` and `update` live in its owners, and new work for each goes to its module:
 
@@ -382,6 +382,7 @@ choice blob makes the usage line unreadable.
 | `kirocrew eval [scenarios…] [--all] [--judge]` | Run multi-session evaluation scenarios; a bare invocation is the ~30s smoke test — see [knowledge.md](knowledge.md). |
 | `kirocrew sandbox install-profile/status/remove-profile` | Manage the AppArmor profile the agent sandbox needs (Linux) — see [security.md](security.md). |
 | `kirocrew kas install/status/remove` | Install, inspect or delete Kiro Crew's own KAS engine bundle (`<data home>/engines/kas/<version>/`: a sha256-pinned `@kiro/agent` build plus its Node runtime). `install` installs this release's pinned version (`acp/kas_pin.py`) and refuses a manifest that does not hash to the pin; it takes `--version` and `--unpinned` (another version, for testing), `--url` (an https base; default `agent.kas_bundle_url`), `--from DIR` (a local manifest and its artifacts, for offline installs) and `--force`. A version the data home already holds is a success with no fetch, so re-running `install.sh --kas` passes; `--force` replaces it. That check is by version name only: a copy an earlier `--unpinned` install laid down under the pin's name also counts, and `--force` is how to swap it for the pinned manifest's engine. `status` shows the pin, the version that runs and every version on disk; `remove --version V` deletes one. Operator-facing like `doctor`: it runs outside the sandbox, which is the only place the `engines` leaf is writable. The route itself is `agent.kas_bundle` — see [acp-client.md](acp-client.md) § KAS bundle route. |
+| `kirocrew kas login/whoami/logout/route` | Crew's own Kiro sign-in from a shell (`cli_kas_login.py`), for a host with no browser and no dashboard session -- the remote crew signed in over SSM by `kirocrew cloud login`, a headless host reached by ssh. `login [--provider builder_id\|idc\|google\|github] [--start-url U] [--region R]` runs the device-code flow and prints `Open <URL>` + `code: XXXX-XXXX`, polling until approved (exit 0 once the vault holds the credential; `already signed in`, exit 0, over a usable stored identity). `whoami [--format json]` exits 0 with the identity (the `kiro-cli whoami --format json` document, never a token) or 1 when signed out. `logout` removes every stored identity; a gateway on the host retires its agent processes on its next turn. `route` prints `kas-bundle` when `agent.acp_backend` is `kas` AND `agent.kas_bundle` is on, `kiro-cli` otherwise -- the remote sign-in scripts read it on the box. Not an MCP tool: a sign-in moves a credential and the agent must never choose whose. [kas-auth.md](kas-auth.md) § Sign-in from a shell. |
 | `kirocrew tailnet status/up/down` | Publish the dashboard on your tailnet (Tailscale) and trust its origin, or stop publishing — see [remote-and-mobile](../../guides/remote-and-mobile.md). |
 | `kirocrew telemetry status/disable/enable` | Inspect exactly what the anonymous beacon sends, or turn it off permanently — see [metrics.md](metrics.md) and [governance.md](governance.md). |
 
@@ -538,6 +539,21 @@ The staged `notification_settings.json` in the same directory is rewritten by
 The merge that consumes the sanitized store reads it again by name; closing that second
 resolution is the merge's job, not the sanitizer's.
 
+`kirocrew restore` applies the same rule to its staged bundle before either mode reads
+it (`snapshot._hold_back_executables`), so a bundle restored from the CLI cannot start
+running commands on the next gateway start: a `command` or `script` cron is restored
+paused (`user_paused`, `enabled` false) and a `command` failing `_vet_shell_command` is
+dropped, through `_sanitize_imported_crons(..., drop_malformed=False)` — the restore
+keeps its own shape handling (merge skips an unusable store, replace validates it), so
+only the vet and the pause are applied. A hook in the staged `hooks.json` that has a
+`command` is restored with `enabled` false by
+`portability_vetting._disable_imported_script_hooks`, which keeps every other top-level
+key (webhook resume contexts) and leaves skill-only hooks alone; the dashboard import
+calls it too and lists the names in `disabled_hooks`. The restore prints the paused,
+disabled and dropped names, and where to switch each back on (Schedules, Hooks). A merge
+into a home that already has a `hooks.json` keeps that file, so no bundle hook is named.
+Message-only crons are restored as they are.
+
 The dashboard import's Merge follows the same never-overwrite rule as
 `kirocrew restore --mode merge` for the settings documents (`config.json`,
 `config.local.json`, `ui-prefs.json`, `notification_settings.json`): it installs one
@@ -584,7 +600,7 @@ module outside the snapshot family imports an owner.
   (`_copy_notifications`).
 
 | `kirocrew config get [key]` | Print full config or a dot-path value |
-| `kirocrew config set <key> <val>` | Set a config value (auto type detection). A key the loaded config does not hold and the schema does not declare exits 1 with `Unknown key`, on `--local` too. `--local` also accepts the slack keys `to_dict()` writes from outside the section (`slack.dm_activation`), type-checked against the field they come from. A key whose schema declares an enum refuses a value outside it on every write (exit 1, naming the selectable values), because the load path answers such a value by degrading it with a warning rather than rejecting it — the write is the last point where the mistake is still attributable to the command. What is written is the enum's own spelling: a case variant is canonicalised (`agent.log_level debug` stores `DEBUG`), and a key with a loader-side alias table (`stt.model`, through `stt.models.canonical_name`) stores the row the alias names (`turbo` stores `large-v3-turbo`). Only declared enums on concrete registry paths are checked; a wildcard path (`slack_channels.*.activation`) keeps reaching the loader's own degrade rule. Type is checked only on a declared leaf's first write (`_declared_type_error`); the enum check has no stored value to stand in for it. A **list-typed** key (declared `array` in the registry, wildcard paths matched segment by segment) never goes through the scalar parser: `_parse_list_value` accepts a JSON array and nothing else, and otherwise exits 1 before anything is written, on `--local` too. The case it exists for is Windows PowerShell 5.1, which strips the inner quotes of `'["a","b"]'` so the CLI receives `[a,b]`; the scalar parser stored that as a string and the loader then dropped the whole list field to its default (`agent.apps_trusted` un-trusting its apps). No comma-list spelling is accepted, because a list field's item type (`list[int]` or `list[str]`) is not known at the write. The refusal prints retry forms that survive PowerShell 7.3+, Windows PowerShell 5.1 and sh. The loader is unchanged. **`--value-base64=<token>`** carries the value as standard Base64 of its UTF-8 text, as ONE attached argument, in place of the positional `VALUE`. After a strict decode (`base64.b64decode(validate=True)`, then UTF-8) the text goes through the same list/scalar parser and the same writer as a positional value, so the stored config is identical. It exists because Windows PowerShell 5.1 drops a separate empty-string argument before a `.cmd` shim and rewrites quotes, so no positional spelling is safe in every shell; an attached token has no quotes and no empty argument. The empty token (`--value-base64=`) is the empty string, detected with `is not None` (never truthiness) and so is a value, not a missing one: a scalar key stores empty text, and a list key refuses it as not a JSON array (an empty list is the token `W10=`, the text `[]`). Combined with a positional `VALUE` or with `--file` it exits 1 before any write; a malformed alphabet, bad padding or non-UTF-8 bytes exit 1 with a `--value-base64:` message and write nothing. `--local` and the key argument work as before. The Settings command rows (see learn-cron-dashboard) generate only this form. |
+| `kirocrew config set <key> <val>` | Set a config value (auto type detection). A key the loaded config does not hold and the schema does not declare exits 1 with `Unknown key`, on `--local` too. `--local` also accepts the slack keys `to_dict()` writes from outside the section (`slack.dm_activation`), type-checked against the field they come from. A `--local` write of a whole object (or a scalar) over an overlay section replaces it; when that removes keys the section held, a stderr hint after the write names each dropped dotted key and the dotted-leaf form that keeps siblings (`_overlay_keys_dropped`). The write itself is unchanged. A key whose schema declares an enum refuses a value outside it on every write (exit 1, naming the selectable values), because the load path answers such a value by degrading it with a warning rather than rejecting it — the write is the last point where the mistake is still attributable to the command. What is written is the enum's own spelling: a case variant is canonicalised (`agent.log_level debug` stores `DEBUG`), and a key with a loader-side alias table (`stt.model`, through `stt.models.canonical_name`) stores the row the alias names (`turbo` stores `large-v3-turbo`). Only declared enums on concrete registry paths are checked; a wildcard path (`slack_channels.*.activation`) keeps reaching the loader's own degrade rule. Type is checked only on a declared leaf's first write (`_declared_type_error`); the enum check has no stored value to stand in for it. A **list-typed** key (declared `array` in the registry, wildcard paths matched segment by segment) never goes through the scalar parser: `_parse_list_value` accepts a JSON array and nothing else, and otherwise exits 1 before anything is written, on `--local` too. The case it exists for is Windows PowerShell 5.1, which strips the inner quotes of `'["a","b"]'` so the CLI receives `[a,b]`; the scalar parser stored that as a string and the loader then dropped the whole list field to its default (`agent.apps_trusted` un-trusting its apps). No comma-list spelling is accepted, because a list field's item type (`list[int]` or `list[str]`) is not known at the write. The refusal prints retry forms that survive PowerShell 7.3+, Windows PowerShell 5.1 and sh. The loader is unchanged. **`--value-base64=<token>`** carries the value as standard Base64 of its UTF-8 text, as ONE attached argument, in place of the positional `VALUE`. After a strict decode (`base64.b64decode(validate=True)`, then UTF-8) the text goes through the same list/scalar parser and the same writer as a positional value, so the stored config is identical. It exists because Windows PowerShell 5.1 drops a separate empty-string argument before a `.cmd` shim and rewrites quotes, so no positional spelling is safe in every shell; an attached token has no quotes and no empty argument. The empty token (`--value-base64=`) is the empty string, detected with `is not None` (never truthiness) and so is a value, not a missing one: a scalar key stores empty text, and a list key refuses it as not a JSON array (an empty list is the token `W10=`, the text `[]`). Combined with a positional `VALUE` or with `--file` it exits 1 before any write; a malformed alphabet, bad padding or non-UTF-8 bytes exit 1 with a `--value-base64:` message and write nothing. `--local` and the key argument work as before. The Settings command rows (see learn-cron-dashboard) generate only this form. |
 | `kirocrew config set --file <path>` | Replace config from a JSON file |
 | `kirocrew config edit` | Open config in `$EDITOR` |
 | `kirocrew memory list/search/stats/audit` | Inspect vector memory (entries, semantic search, counts, suspicious-content scan) |
@@ -653,8 +669,7 @@ operator to restart a gateway that works.
 The same busy-vs-unreachable split applies to the other CLI calls that reach the
 local gateway (`TimeoutError` is an `OSError`, so a timeout must be told apart
 from a refused connection or a slow live gateway reads as down). `kirocrew spawn
-list`/`spawn run`, `kirocrew logout`, `kirocrew update` approve, `kirocrew
-file-delivery approve`, `kirocrew cron trigger` and `kirocrew status` classify a
+list`/`spawn run`, `kirocrew logout`, `kirocrew update` approve, `kirocrew cron trigger` and `kirocrew status` classify a
 timeout through the one public `loopback_http.deadline_expired` seam (beside
 `loopback_urlopen`): a read timeout or a `URLError` wrapping a connect timeout
 reports the gateway as up but busy, and only a refused connection keeps the
@@ -666,9 +681,9 @@ was accepted and the gateway then stalled) as busy and report a connect-phase
 timeout as not running, rather than reading a stopped gateway as busy. A call
 whose request is not idempotent does not advise a blind retry: `spawn run` and
 `cron trigger` carry a request the gateway may act on after the client times out
-(spawn points at `kirocrew spawn list`), and `update` approve and `file-delivery`
-approve carry a single-use nonce the gateway may already have consumed, so their
-busy lines point at the dashboard rather than inviting a re-run.
+(spawn points at `kirocrew spawn list`), and `update` approve carries a single-use
+nonce the gateway may already have consumed, so its busy line points at the
+dashboard rather than inviting a re-run.
 
 The contract exists because stdout is parsed, not just read by a human. The
 remote-mint path (`kiro_crew.instances.token_mint.mint_remote_token`) runs
@@ -1294,7 +1309,7 @@ binding its port, while every other subcommand kept working.
 `platform_compat.ensure_line_buffered_stdout()` runs once on the **`gateway`
 command path only**, as the first statement of the dispatch branch, before the
 first status line prints. The gateway's `👻` status lines (`Checking for
-updates…`, `Probing MCP servers…`, `Kiro Crew gateway starting…`, the
+updates…`, `Probing MCP servers…`, `Kiro Crew gateway running — press Ctrl+C to stop`, the
 update-check outcome, `Shutting down…`) are plain `print()` calls. CPython
 line-buffers `sys.stdout` only when it is a terminal; a pipe or a file gets a
 block buffer that drains when it fills or when the interpreter exits cleanly.
@@ -1423,8 +1438,8 @@ order is the one `test_cli_doctor_refactor_report.py` freezes.
 
 1. `kiro-cli` binary in PATH. On the KAS bundle route (`agent_sdk.kas_bundle.kas_bundle_route()`: KAS selected AND `agent.kas_bundle` on) an absent kiro-cli is `⏭ not installed; not needed` with no install hint, never an issue, because nothing on that route spawns it; the engine the route runs is reported in the **KAS backend** section (`_report_kas_bundle`: version, `pin:` against this release's `KAS_PIN_VERSION` -- `⚠️` only when `KIROCREW_KAS_VERSION` picked another, other installed versions listed for rollback -- the `install.json` path and its two entry points, the spawn argv, the vault as the only auth owner with Crew's own sign-in remedy). The per-harness `kas auth:` row (`doctor_checks/agents._doctor_agent_auth`) follows the same route: the vault's state decides it and it never falls through to the kiro-cli store, so a bundle host without kiro-cli reads `⏹ Kiro Crew vault; not signed in` plus that remedy rather than `could not check`. The relay route keeps every kiro-cli row unchanged.
 2. **Node.js**: `node` on PATH at or above `MIN_NODE_VERSION` (22.12.0, `constants.py`); below it doctor prints `❌` with the remedy and records the `node` issue, so doctor exits 1
-3. Source directory (Kiro Crew checkout) and git repo
-4. Agent config installed
+3. Source directory (Kiro Crew checkout) and git repo. A missing `git` binary is an issue only when `derive_capability()` says git updates this install; a wheel updates by re-running its installer, so there it prints `⏭`
+4. Agent config installed. A missing `kirocrew.json` prints `⏭` only when `gateway_lock.lock_holder` positively reports that no gateway holds the lock, because the gateway writes the spec at start; a running gateway, or a lock probe that cannot answer, keeps it an issue
 5. Config values (provider, model, approval mode, dashboard port)
 6. **MCP tools**: `@kirocrew-cron` and `@kirocrew-core` in `tools`, `allowedTools`, and `mcpServers` — auto-fixes missing entries, except from an instance that must not own the shared agent home (`_decline_shared_agent_home`), which writes nothing and reports the skipped repairs and any ceiling-forbidden grant as issues
 7. **Python environment**: verifies the running interpreter (the venv interpreter for a `pip install -e .` install) and that the gateway's core dependencies (`websockets`, `slack_sdk`, `aiohttp`) import; the supported interpreter floor is `pyproject.toml`'s `requires-python`. Every install command this step prints names the RUNNING interpreter and is gated the same way as step 8's (`extras.pip_install_command_for` behind `extras.pip_install_channel_available`), because each one is for a module this process imports, so a bare `pip` can resolve to an interpreter the gateway never imports from. The `sqlite fts5` remedy is the one place the gate hides only part of the message: the pip command is withheld where it cannot run, while "use a Python whose SQLite was built with FTS5" always prints, since that is the only remaining fix in exactly those environments. The `import path` row reports whether the standard library resolves from the interpreter's own tree: `stdlib_shadow.find_shadowed_stdlib()` locates each probed stdlib name with `find_spec` (never an import) and reports one that a launch-directory, `PYTHONPATH` or site-packages entry supplied — a `~/concurrent/` directory in the home the service unit runs from, an unpacked backport on `PYTHONPATH`, a stdlib-named pip package. A shadow IS an issue and names the module, the resolved file and the `sys.path` entry with its class, because the failure it otherwise produces is a `TypeError` from deep inside asyncio with nothing pointing at the directory. The same probe runs at both process entries (`python -m kiro_crew` and the `kirocrew` console script) BEFORE the CLI is imported and refuses to start with exit 2 on a shadow, so doctor normally reaches this row only clean; the row then says whether the launch entry is on `sys.path` at all (`-P` / `PYTHONSAFEPATH` keeps it off, and every bundled launcher passes `-P`), which is the note that tells an operator why the same stray directory is harmless from one cwd and fatal from another. Detection is fail-closed towards "not shadowed": an entry the classifier does not recognise as one of those three roots is never reported, so an unusual layout can only escape the check, never be refused by it. The `tz data` row reads the timezone rules behaviourally, because a system zoneinfo tree exposes no version the stdlib can read: it resolves America/Vancouver with `ZoneInfo.no_cache` at a December 2026 instant, where IANA tzdb 2026b and later give UTC-7 and older data gives UTC-8. Older data is an issue (cron expressions and clock-time `at_time` values in that zone resolve an hour late, and nothing else notices, since every zone name still resolves); missing data is an issue too. The remedy names the data source in use: a zone file on `zoneinfo.TZPATH` means the operating system's timezone package, otherwise the `tzdata` Python package (`setup.cfg` declares `tzdata>=2026.2` on every platform, the first release built from 2026b), and it ends with a gateway restart because a running gateway keeps every zone it already loaded
@@ -1729,7 +1744,6 @@ byte:
 |---|---|---|
 | `kirocrew spawn list` / `spawn run`, `kirocrew artifact` (`cli_commands_gateway_api._gateway_send`) | `_owner_verified_secret_urlopen`, both arms | `Error: gateway ownership not verified: …`, exit 1 (`artifact` prints it on stderr) |
 | `spawn run`'s result poll (`_gateway_send`, operation `cli_spawn_poll`) | `_owner_verified_secret_urlopen`, both arms; every poll is audited | the same message on stderr, exit 1 |
-| `kirocrew file-delivery approve` (`_file_delivery_approve`) | `_owner_verified_secret_urlopen`, both arms | ownership message, exit 1 |
 | `kirocrew doctor` adaptive-controller read (`doctor_checks.workload._gateway_adaptive_state`) | `_owner_verified_secret_urlopen`, both arms | one `not read` line naming the unproven peer |
 | `app_lifecycle_client` (mint and action) | owner-only unix socket only; `verify_peer` requires `_connected_unix_peer_is_recorded_gateway` | `AppGatewayError` (not an `OSError`), so the CLI never drops to its file-only path |
 | `memory_forget_client` (mint and delete) | owner-only unix socket only; `_gateway_peer_verifier` wraps `_connected_unix_peer_is_recorded_gateway` and refuses up front when `_recorded_gateway_pid` has no pid | `ForgetRefused` |
@@ -2634,6 +2648,12 @@ per-session tree ceiling the cleanup watchdog recycles at
 (`watchdog_rss_max_mb`, spelled out as disabled when `0`). Both fields are
 published by `/api/status` for this line; `kirocrew doctor` prints the same two
 readings at the top of its Memory Pressure section, on every platform.
+
+It exits 1 when nothing answers the resolved port (a refused connection,
+printed as "not running"), so a script or health check can gate on `$?`
+without parsing stdout. It exits 0 whenever a gateway answers: the stats
+view, a token-auth `401`/`403`, another HTTP error, a busy timeout or an
+unexpected body.
 
 ## App Dev Mode
 

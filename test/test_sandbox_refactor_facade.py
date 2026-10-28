@@ -166,6 +166,8 @@ _MOVED: dict[str, tuple[str, ...]] = {
         _bundled_kas_targets_cached
         _gateway_package_dir _APP_BACKEND_OWNED_LEAVES app_backend_visible_targets
         crew_home_visible_spellings carveout_chain_has_planted_link
+        enterprise_policy_cache_view _caller_mask_contains _POLICY_CACHE_META_LEAF
+        _policy_cache_meta_names_its_source
         carveout_shadowed_by_foreign_mask _STRICT_DIRS _STANDARD_DIRS _CC_DIRS _resolves_to
         _crew_home_alias_roots _relocated_crew_targets _POD_OS_HOME_GRANT_STORE_LEAVES
         _POD_OS_HOME_MASKED_SUBLEAVES _pod_os_home_targets _relocated_policy_cache_dirs
@@ -294,12 +296,14 @@ _MOVED: dict[str, tuple[str, ...]] = {
         _stat_identity _cgroup_scope_session_fingerprint _user_bus_reachable
         _probe_cgroup_scope _log_cgroup_scope_transition _compute_cgroup_scope_probe
         _CPU_DELEGATED _cpu_controller_delegated _cgroup_limits_from_config
+        _CGROUP_DEFAULT_SCOPE_MEMORY_HIGH_PCT _scope_memory_high_mb _read_resource_limits
         """.split()),
     "kiro_crew.sandbox_slice": tuple("""
         _SLICE_MEMORY_HIGH_FRACTION _SLICE_FALLBACK_MEMORY_HIGH_MB _SLICE_MEMHIGH_APPLIED
         _SLICE_MEMHIGH_DISABLED _default_slice_memory_high_mb
         _ensure_agent_slice_memory_high _SLICE_MEMHIGH_EVENTS_SEEN
         _SLICE_MEMHIGH_CLIMB_WARNED _slice_memory_events_high _check_slice_memory_pressure
+        _slice_own_high_events
         _SLICE_MEMHIGH_MUTEX _reconcile_slice_memory_high_off_thread
         _WINDOWS_INERT_RESOURCE_LIMIT_KEYS _WINDOWS_INERT_LIMITS_WARNED
         _warn_windows_inert_resource_limits_once apply_windows_resource_ceiling

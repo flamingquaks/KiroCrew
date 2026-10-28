@@ -26,7 +26,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] =
     "id": "about.update-the-gateway-automatically",
     "label": "Update the gateway automatically",
     "labelKey": "pages.settings.aboutPanel.automatic_updates",
-    "description": "Installs a new release once no work is running and restarts the gateway, on installs that can update themselves.",
+    "description": "Restarts the gateway to install a new release once no work is running. When off, it stays on its current version.",
     "tab": "about",
     "type": "toggle",
     "occurrence": 1,
@@ -1284,7 +1284,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] =
     "id": "chat.prevent-sleep-while-running",
     "label": "Prevent sleep while running",
     "labelKey": "pages.settings.chatPanel.prevent_sleep_while_running",
-    "hint": "Keep your computer awake while a task is running",
+    "hint": "Keep your computer awake while a task is running. On some Windows laptops (Modern Standby), locking the screen can still let it sleep, so keep the screen on for long tasks.",
     "tab": "chat",
     "type": "toggle",
     "occurrence": 1,
@@ -1406,7 +1406,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] =
     "id": "chat.show-full-titles-while-scrolling",
     "label": "Show Full Titles While Scrolling",
     "labelKey": "pages.settings.chatPanel.full_titles_on_scroll",
-    "hint": "While you scroll the session list, titles the sidebar cuts off show in full",
+    "hint": "While you scroll the session list, cut-off titles show in full",
     "tab": "chat",
     "type": "toggle",
     "occurrence": 1,
@@ -1912,6 +1912,15 @@ export const SETTINGS_REGISTRY: SettingEntry[] =
     "occurrence": 1
   },
   {
+    "id": "developer.session-environments",
+    "label": "Session Environments",
+    "labelKey": "sessionEnvironments.title",
+    "description": "Shows the Session Environments settings. Existing chats stay on this machine; a chat moves only if you pick a profile for it before its first message.",
+    "tab": "developer",
+    "type": "toggle",
+    "occurrence": 1
+  },
+  {
     "id": "developer.webhooks",
     "label": "Webhooks",
     "labelKey": "pages.developer.featurePreviewsTab.webhooks",
@@ -2098,6 +2107,19 @@ export const SETTINGS_REGISTRY: SettingEntry[] =
     "params": {
       "sub": "view"
     }
+  },
+  {
+    "id": "display.keep-running-in-the-background-after-closing-the-window",
+    "label": "Keep running in the background after closing the window",
+    "labelKey": "pages.settings.displayPanel.keep_running_when_window_closed",
+    "description": "Closing the window hides Kiro Crew and keeps your sessions and jobs running. Turn this off to make the close button quit the app. A gateway this app started stops with it, and a gateway it only connects to keeps running.",
+    "tab": "display",
+    "type": "toggle",
+    "occurrence": 1,
+    "params": {
+      "sub": "view"
+    },
+    "settingId": "display.keep-running-in-the-background-after-closing-the-window"
   },
   {
     "id": "display.language",
@@ -2289,7 +2311,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] =
     "id": "notifications.notify-me-even-when-kiro-crew-is-closed",
     "label": "Notify me even when Kiro Crew is closed",
     "labelKey": "pages.settings.notificationsPanel.push_toggle_label",
-    "description": "A separate switch from system notifications above, which only work while Kiro Crew is open.",
+    "description": "Sends alerts to this device even after you close Kiro Crew. System notifications stop once you close it.",
     "tab": "notifications",
     "type": "toggle",
     "occurrence": 1,
@@ -2545,6 +2567,43 @@ export const SETTINGS_REGISTRY: SettingEntry[] =
     "description": "Add your own deny patterns (Python-compatible regex). These are enforced at {{productName}}'s PreToolUse gate alongside the built-in rules."
   },
   {
+    "id": "session-environments.coder-url",
+    "label": "Coder URL",
+    "labelKey": "sessionEnvironments.url",
+    "description": "Use the deployment URL without credentials, query parameters, or fragments, for example https://coder.example.com.",
+    "tab": "session-environments",
+    "type": "input",
+    "occurrence": 1,
+    "configKey": "session_environments.coder_url"
+  },
+  {
+    "id": "session-environments.default-for-new-chats",
+    "label": "Default for new chats",
+    "labelKey": "sessionEnvironments.defaultProfile",
+    "description": "New chats you start in the dashboard run here unless you pick another profile in the “Run this chat on” menu before the first message. Existing chats, scheduled jobs and channel conversations keep running where they do now.",
+    "tab": "session-environments",
+    "type": "select",
+    "occurrence": 1
+  },
+  {
+    "id": "session-environments.start-new-chats-on-a-profile",
+    "label": "Start new chats on a profile",
+    "labelKey": "sessionEnvironments.defaultEnabled",
+    "tab": "session-environments",
+    "type": "toggle",
+    "occurrence": 1,
+    "configKey": "session_environments.default_profile"
+  },
+  {
+    "id": "session-environments.stop-workspaces-when-kiro-crew-shuts-down",
+    "label": "Stop workspaces when Kiro Crew shuts down",
+    "labelKey": "sessionEnvironments.stopOnShutdown",
+    "tab": "session-environments",
+    "type": "toggle",
+    "occurrence": 1,
+    "configKey": "session_environments.stop_on_shutdown"
+  },
+  {
     "id": "shortcuts.enable-shortcuts",
     "label": "Enable shortcuts",
     "labelKey": "pages.settings.shortcutsPanel.enable_shortcuts",
@@ -2649,7 +2708,6 @@ export const SETTINGS_REGISTRY: SettingEntry[] =
     "id": "voice.aws-region-transcribe",
     "label": "AWS Region (Transcribe)",
     "labelKey": "pages.settings.sttSettings.aws_region_transcribe",
-    "description": "AWS region for Transcribe",
     "tab": "voice",
     "type": "input",
     "occurrence": 1

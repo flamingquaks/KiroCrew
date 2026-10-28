@@ -18,7 +18,6 @@
 #   python3 scripts/check_sync_io_in_async.py --report
 3 src/kiro_crew/acp/client_start.py
 1 src/kiro_crew/apps/builtins/dev_fleet/worktree_ops.py
-2 src/kiro_crew/apps/builtins/dev_fleet/worktree_ops_pods.py
 3 src/kiro_crew/apps/builtins/dev_fleet/worktree_ops_sync.py
 1 src/kiro_crew/apps/lifecycle_scripts.py
 7 src/kiro_crew/apps/registry.py
@@ -47,13 +46,9 @@
 1 src/kiro_crew/dashboard/messaging_api/webex_settings.py
 1 src/kiro_crew/dashboard/server.py
 2 src/kiro_crew/frontend.py
-1 src/kiro_crew/knowledge/artifact_ingest.py
-1 src/kiro_crew/knowledge/ingestion.py
-2 src/kiro_crew/knowledge/watcher.py
 1 src/kiro_crew/mcp_discovery_probe.py
 1 src/kiro_crew/mcp_gateway/resolve_once.py
 1 src/kiro_crew/providers/acp_runtime_start.py
-4 src/kiro_crew/slack/gateway_runtime/install_repair.py
 2 src/kiro_crew/slack/handler_runtime/commands.py
 2 src/kiro_crew/slack/interactions.py
 1 src/kiro_crew/stt/models.py

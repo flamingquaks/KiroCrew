@@ -76,6 +76,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import queue
+import sys
 import threading
 import time
 from collections.abc import Iterable, Iterator
@@ -104,6 +105,8 @@ _WAKE_TYPES: Final[frozenset[str]] = frozenset(
     {
         _CLOSED_TYPE,
         "work/recorded",
+        # The project report reads the charges the gateway relays into a board's log.
+        "work/charged",
         "panel/published",
         "ledger/recorded",
         "radar/recorded",
@@ -111,6 +114,7 @@ _WAKE_TYPES: Final[frozenset[str]] = frozenset(
         "dashboard/agentic_refused",
         "dashboard/goal_recorded",
         "dashboard/waiting_changed",
+        "dashboard/custom_value",
         # The ``workers`` fold: a crewmate's creates, and each worker's own turns,
         # replies and end, which it reads from the worker's log and routes to the
         # crewmate's cell (:func:`_creator_slot`).
@@ -150,9 +154,9 @@ class _Wake(NamedTuple):
     ``board`` is the slot whose fold this entry belongs to, and it has to be carried
     rather than derived. A unit's HEADER names the slot that unit ran under, which for a
     conductor's own entry is the board -- but a worker's ``work/recorded`` names the
-    CONDUCTOR's board in its own ``slot`` field and reaches that fold only by joining it
-    (``_work_units``). Resolving the header instead advances the worker's own board and
-    leaves the conductor's -- the one a dashboard reads -- exactly as stale as before. The
+    CONDUCTOR's board in its own ``slot`` field, and the gateway writes the board's own
+    copy of it into the conductor's unit. Resolving the header for the worker's copy
+    would advance the worker's own board rather than the one a dashboard reads. The
     emitter holds the entry, so it is the one place the board is free to read; empty means
     "the unit's header names it", which is true of every type that carries no board of its
     own.
@@ -569,9 +573,20 @@ def paused() -> Iterator[bool]:
     else:
         timeout = 0.0
     held = _fold_gate.acquire(timeout=timeout) if timeout > 0 else _fold_gate.acquire(False)
+    # A background prime (``slot_prime``) reads unit files off this worker, under its own
+    # gate so it never holds up a wake: the caller waits for it the same bounded way.
+    primes = sys.modules.get("kiro_crew.crew_log.slot_prime")
+    prime_gate = getattr(primes, "_fold_gate", None)
+    prime_held = False
+    if held and prime_gate is not None:
+        prime_held = (
+            prime_gate.acquire(timeout=timeout) if timeout > 0 else prime_gate.acquire(False)
+        )
     try:
-        yield held
+        yield held and (prime_gate is None or prime_held)
     finally:
+        if prime_held and prime_gate is not None:
+            prime_gate.release()
         if held:
             _fold_gate.release()
 
@@ -737,6 +752,12 @@ def _fold_batch(
             # unit the slot ran under and throw the result away. Left to the read path,
             # which folds it when a reader asks.
             continue
+        if not _slot_fold_wanted(slot, name):
+            # Nobody subscribes to this cell (the dashboard exporter holds keyed
+            # subscriptions for the boards its tabs watch, and neither
+            # ``conductor_wake`` nor a live page asks for it), so the read and the
+            # render would be for no one. The read path folds it when someone reads.
+            continue
         _advance(slot, name)
     # Every woken unit, once: its session folds share one pass over its one file, and
     # ``status`` and ``class`` read every type, so any wake moves at least one of them.
@@ -744,6 +765,21 @@ def _fold_batch(
         _advance_session(unit_id)
         if closed.get(unit_id, 0) >= seq > 0:
             projection.forget_session_folds(unit_id)
+
+
+def _slot_fold_wanted(slot: str, name: str) -> bool:
+    """Whether a bus subscriber wants *slot*'s *name*; ``True`` unless on-demand mode.
+
+    See :func:`kiro_crew.crew_log.bus.slot_fold_wanted`. Never raises: a failure to
+    ask folds the cell, which is what this path did before it asked.
+    """
+    # boot-path import gate: see this module's docstring and ``_projection``.
+    from kiro_crew.crew_log import bus
+
+    try:
+        return bus.slot_fold_wanted(slot, name)
+    except Exception:  # pragma: no cover - defensive; the bus lookup does not raise
+        return True
 
 
 def _creator_slot(slot: str) -> str:
@@ -848,7 +884,15 @@ def _advance(slot: str, name: str) -> None:
     started = _begin_pass()
     folded = None
     try:
-        folded = projection.read_slot_projection(slot, name)
+        # Never COLD here: a cell with no warm state and no usable savepoint would fold
+        # every unit the slot ran under on this one worker, stalling every wake behind
+        # it. That fold goes to one background prime per cell, which publishes itself.
+        folded = projection.read_slot_projection(slot, name, cold=False)
+    except projection.SlotFoldNotReady:
+        from kiro_crew.crew_log import slot_prime
+
+        slot_prime.schedule(slot, name)
+        return
     except CrewLogError:
         # A refusal is about the record, not about this path: the read route raises the
         # same thing for the same slot, and inventing a value here would serve one the
@@ -930,17 +974,21 @@ def drain(timeout: float = 5.0) -> bool:
     worker has TAKEN the last wake, which is not the same as having folded it, and a
     waiter that stopped there would read a value the fold had not reached yet.
     """
-    if _queue is None:
-        return True
     deadline = time.monotonic() + max(timeout, 0.0)
-    with _progress:
-        while True:
-            if _settled >= _queued:
-                return True
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return _settled >= _queued
-            _progress.wait(min(remaining, _POLL_SECONDS))
+    if _queue is not None:
+        with _progress:
+            while _settled < _queued:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                _progress.wait(min(remaining, _POLL_SECONDS))
+    # A wake whose cell was cold handed its fold to a background prime, which also writes
+    # into the data home: the barrier covers it too. Looked up rather than imported, so a
+    # process that never primed loads nothing here.
+    primes = sys.modules.get("kiro_crew.crew_log.slot_prime")
+    if primes is not None:
+        return bool(primes.drain(max(deadline - time.monotonic(), 0.0)))
+    return True
 
 
 #: How long :func:`stop_for_tests` waits for the worker to leave its batch. Generous
@@ -997,6 +1045,12 @@ def retire_for_tests() -> "BaseException | None":
         stop_for_tests()
     except TimeoutError as exc:
         return exc
+    # A wake or a baseline may have handed a cold fold to a background prime, which
+    # resolves the data home when it folds: wait it out while the pin still holds, and
+    # forget its state so the next test starts with none. Looked up, not imported.
+    primes = sys.modules.get("kiro_crew.crew_log.slot_prime")
+    if primes is not None:
+        primes.reset_for_tests()
     return None
 
 

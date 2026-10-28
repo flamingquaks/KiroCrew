@@ -262,6 +262,16 @@ _BLOCKED_SLASH_COMMANDS = (
     | _KIRO_ONLY_BLOCKED_SLASH_COMMANDS
 )
 
+# Commands the dashboard serves without the harness: the composer opens /side
+# itself, and the slash gate answers /agent <name>, /clear, /goal, /prompts and
+# /workflow before any session work. On a harness in
+# ``ACP_BACKENDS_LOCAL_HARNESS_COMMANDS`` every other harness command only gets a
+# notice, so GET /api/slash-commands lists these (plus /compact, which has a gate
+# of its own) and nothing else there.
+_DASHBOARD_SERVED_SLASH_COMMANDS = frozenset(
+    {"/agent", "/clear", "/goal", "/prompts", "/side", "/workflow"}
+)
+
 # Slash-command descriptions surfaced by the dashboard API
 # (GET /api/slash-commands): the English text for API clients and the fallback
 # the frontend shows for a command it has no catalog key for. A command with a
@@ -602,6 +612,7 @@ if TYPE_CHECKING:  # every owner-defined name in _EXPORTS, for type checkers and
         SYNTHESIS_UNKNOWN,
         _attached_verdict,
         _queued_depth_off_loop,
+        _slot_holds_delivery,
         chat_done_payload,
         chunk_generation,
         subagents_attached,
@@ -618,6 +629,7 @@ if TYPE_CHECKING:  # every owner-defined name in _EXPORTS, for type checkers and
         _DISPLAY_REDACTION_SALT,
         _DISPLAY_REDACTION_STRINGS_PER_ROW,
         _NO_BASE,
+        BLOCKED_LINKS_ORDERED_KEY,
         REDACTION_RECORD_FIELDS,
         SLOT_DETAIL_MAX_LIMIT,
         UNKNOWN_ROW_FIELDS_KEY,

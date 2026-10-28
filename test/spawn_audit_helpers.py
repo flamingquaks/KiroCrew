@@ -14,6 +14,9 @@ BENIGN_PACKAGE_SPAWNS: frozenset[str] = frozenset(
         # Coder lifecycle: resolved operator CLI, fixed verbs, saved template/preset
         # and validated generated names; cwd the data home, stdin DEVNULL, no shell.
         "coder/client.py::_run",
+        # Embedding child: this interpreter, -P, a fixed module; requests travel
+        # on its pipes as data, never as argv. No agent input reaches the spawn.
+        "embeddings_child.py::spawn",
         # Gateway transport: argv from the resolved CLI, saved deployment and
         # validated workspace; the shell text is a quoted GUEST command and payloads
         # ride stdin. Host credential isolation would prevent coder login.
@@ -482,6 +485,15 @@ BENIGN_PACKAGE_SPAWNS: frozenset[str] = frozenset(
         # ``_cleanup_app_crons_from_scheduler`` above. No child process is
         # created; the sole input is the operator-typed app name.
         "cli_commands_app.py::_register_app_crons_to_scheduler",
+        # NOT a subprocess spawn: the AST heuristic matches ``asyncio.run`` (attr
+        # ``run`` on base ``asyncio``) driving ``KasLoginService``'s device-code
+        # sign-in and sign-out coroutines from the loop-less ``kirocrew kas
+        # login`` / ``kas logout`` verbs. No child process is created: the
+        # inputs are operator-typed flags (provider, start URL, region) that go
+        # into HTTPS requests to the issuer and into Crew's own vault, never
+        # into an argv. Same classification as ``cli_doctor.py::_doctor``.
+        "cli_kas_login.py::_login",
+        "cli_kas_login.py::_logout",
         "cli_doctor.py::_doctor",
         # NOT a subprocess spawn: the AST heuristic matches ``asyncio.run`` (attr
         # ``run`` on base ``asyncio``) driving the async Discord
@@ -831,6 +843,12 @@ BENIGN_PACKAGE_SPAWNS: frozenset[str] = frozenset(
         # It does carry `git_neutralizer_env()`, so repo config cannot make these
         # reads exec a program (`core.fsmonitor` and friends are pinned).
         "platform/update_governance.py::_git_probe",
+        # `git config --system|--global --includes -z --get-all safe.directory`,
+        # run so `git_command_env` can forward those values after it stops git
+        # reading the home's config files. Fixed list-argv (no shell=True), no
+        # agent input, cwd is the filesystem root. Must NOT be sandboxed: it
+        # reads the operator's real config. Reading config runs no program.
+        "platform/update_governance.py::_read_protected_safe_directories",
         # Read-only `git rev-parse --show-toplevel` deciding whether the install
         # root IS a working tree. Fixed list-argv (no shell=True); the only
         # variable is the path, which comes from KIROCREW_PROJECT_DIR — an

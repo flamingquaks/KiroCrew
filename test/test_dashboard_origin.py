@@ -12,6 +12,7 @@ from kiro_crew.dashboard.origin import (
     bind_address_for,
     build_allowed_origins,
     build_dashboard_url,
+    check_host,
     check_origin,
     dashboard_origin,
     format_dashboard_urls,
@@ -260,7 +261,24 @@ class TestBuildDashboardUrl:
 
 
 class TestFormatDashboardUrls:
-    @patch.dict("os.environ", {}, clear=True)
+    @pytest.fixture(autouse=True)
+    def _not_over_ssh(self, _floor_monkeypatch):
+        """Unset the two variables ``format_dashboard_urls`` reads, and nothing else.
+
+        Clearing ``os.environ`` would also drop the floor's ``KIROCREW_HOME`` pin for
+        the test's duration. Nothing here resolves the data home, but a resolver left
+        running by an EARLIER test on the worker (a model's idle evictor, a debounced
+        crew-log write) can tick inside that window, fall through to the operator's real
+        ``~/.kiro/crew``, and the teardown guard then blames whichever test here is
+        running -- the hanging-lookup test has the widest window. Removing only what the
+        function reads keeps the pin, so a stray resolution lands in this test's home.
+        Patched through the floor's own instance, not the shared ``monkeypatch``: an
+        autouse fixture on the shared one is lifted by any ``monkeypatch.undo()`` in a
+        test body.
+        """
+        _floor_monkeypatch.delenv("SSH_CONNECTION", raising=False)
+        _floor_monkeypatch.delenv("SSH_CLIENT", raising=False)
+
     @patch(f"{_MOD}.devspaces_proxy_url", return_value=None)
     @patch(f"{_MOD}.machine_hostname", return_value="localhost")
     def test_local_direct_url(self, _mh: object, _dp: object) -> None:
@@ -269,14 +287,13 @@ class TestFormatDashboardUrls:
         assert lines[0] == "👻 Dashboard:"
         assert "http://localhost:5476" in lines[1]
 
-    @patch.dict("os.environ", {}, clear=True)
     @patch(f"{_MOD}.devspaces_proxy_url", return_value=None)
     @patch(f"{_MOD}.machine_hostname", return_value="localhost")
     def test_token_in_url_shown(self, _mh: object, _dp: object) -> None:
         lines = format_dashboard_urls("http://localhost:5476?token=abc", port=5476)
         assert "token=abc" in lines[1]
 
-    @patch.dict("os.environ", {"SSH_CONNECTION": "1.2.3.4 1234 5.6.7.8 5678"}, clear=True)
+    @patch.dict("os.environ", {"SSH_CONNECTION": "1.2.3.4 1234 5.6.7.8 5678"})
     @patch(f"{_MOD}.devspaces_proxy_url", return_value=None)
     @patch(f"{_MOD}.machine_hostname", return_value="myhost")
     @patch(f"{_MOD}.socket.gethostbyname", side_effect=socket.gaierror)
@@ -286,7 +303,6 @@ class TestFormatDashboardUrls:
         assert any("http://localhost:5476?token=t" in ln for ln in lines)
         assert any("systemd" in ln for ln in lines)
 
-    @patch.dict("os.environ", {}, clear=True)
     @patch(f"{_MOD}.devspaces_proxy_url", return_value=None)
     @patch(f"{_MOD}.machine_hostname", return_value="myhost.internal.example.com")
     @patch(f"{_MOD}.socket.gethostbyname", return_value="10.0.0.1")
@@ -296,7 +312,6 @@ class TestFormatDashboardUrls:
         lines = format_dashboard_urls("http://localhost:5476", port=5476, local_only=True)
         assert any("Remote" in ln and "ssh -NL" in ln for ln in lines)
 
-    @patch.dict("os.environ", {}, clear=True)
     @patch(f"{_MOD}.devspaces_proxy_url", return_value=None)
     @patch(f"{_MOD}.machine_hostname", return_value="Mac-1234.local")
     def test_a_hanging_hostname_lookup_cannot_stall_startup(
@@ -356,7 +371,6 @@ class TestFormatDashboardUrls:
         ], "format_dashboard_urls blocked until the hostname lookup completed"
         assert not any("Remote" in ln for ln in lines)
 
-    @patch.dict("os.environ", {}, clear=True)
     @patch(f"{_MOD}.devspaces_proxy_url", return_value=None)
     @patch(f"{_MOD}.machine_hostname", return_value="myhost.internal.example.com")
     @patch(f"{_MOD}.socket.gethostbyname", return_value="10.0.0.1")
@@ -366,21 +380,18 @@ class TestFormatDashboardUrls:
         lines = format_dashboard_urls("http://localhost:5476", port=5476, has_custom_host=True)
         assert not any("Remote" in ln for ln in lines)
 
-    @patch.dict("os.environ", {}, clear=True)
     @patch(f"{_MOD}.devspaces_proxy_url", return_value="https://proxy.devspaces.example.com")
     @patch(f"{_MOD}.machine_hostname", return_value="localhost")
     def test_devspaces_proxy_shown_when_not_local(self, _mh: object, _dp: object) -> None:
         lines = format_dashboard_urls("http://host:5476?token=t", port=5476, local_only=False)
         assert any("Proxy" in ln and "proxy.devspaces" in ln for ln in lines)
 
-    @patch.dict("os.environ", {}, clear=True)
     @patch(f"{_MOD}.devspaces_proxy_url", return_value="https://proxy.devspaces.example.com")
     @patch(f"{_MOD}.machine_hostname", return_value="localhost")
     def test_devspaces_proxy_hidden_when_local(self, _mh: object, _dp: object) -> None:
         lines = format_dashboard_urls("http://localhost:5476", port=5476, local_only=True)
         assert not any("Proxy" in ln for ln in lines)
 
-    @patch.dict("os.environ", {}, clear=True)
     @patch(f"{_MOD}.devspaces_proxy_url", return_value="https://proxy.devspaces.example.com")
     @patch(f"{_MOD}.machine_hostname", return_value="localhost")
     def test_token_propagated_to_proxy_url(self, _mh: object, _dp: object) -> None:
@@ -520,7 +531,7 @@ class TestCheckOriginLoopbackTrust:
 class TestAllowedLoopbackPortsEnv:
     """KIROCREW_ALLOWED_LOOPBACK_PORTS opts specific loopback ports into the allowed set."""
 
-    @patch.dict("os.environ", {"KIROCREW_ALLOWED_LOOPBACK_PORTS": "8777,9000"}, clear=True)
+    @patch.dict("os.environ", {"KIROCREW_ALLOWED_LOOPBACK_PORTS": "8777,9000"})
     def test_env_ports_added(self) -> None:
         origins = build_allowed_origins(7777, local_only=True)
         assert "http://localhost:8777" in origins
@@ -528,13 +539,13 @@ class TestAllowedLoopbackPortsEnv:
         assert "http://[::1]:8777" in origins
         assert "http://localhost:9000" in origins
 
-    @patch.dict("os.environ", {"KIROCREW_ALLOWED_LOOPBACK_PORTS": "notaport"}, clear=True)
+    @patch.dict("os.environ", {"KIROCREW_ALLOWED_LOOPBACK_PORTS": "notaport"})
     def test_non_numeric_ignored(self) -> None:
         origins = build_allowed_origins(7777, local_only=True)
         assert not any(":notaport" in o for o in origins)
 
-    @patch.dict("os.environ", {}, clear=True)
-    def test_no_env_only_bound_port(self) -> None:
+    def test_no_env_only_bound_port(self, monkeypatch) -> None:
+        monkeypatch.delenv("KIROCREW_ALLOWED_LOOPBACK_PORTS", raising=False)
         origins = build_allowed_origins(7777, local_only=True)
         assert "http://localhost:7777" in origins
         assert "http://localhost:8777" not in origins
@@ -1039,6 +1050,128 @@ class TestCheckHost:
         request.headers = {"Host": "localhost:5476"}
         request.app = {}  # dict.get("allowed_origins") -> None
         assert check_host(request) is False
+
+
+class TestCanonicalHostSpellings:
+    """A different spelling of an allowed loopback host passes,
+    and nothing else does. Both checks canonicalize the request side and the
+    allowed side with the same helper; ports in Origin still match exactly."""
+
+    _ALLOWED = frozenset(
+        {"http://localhost:5476", "http://127.0.0.1:5476", "http://[::1]:5476", "http://localhost"}
+    )
+
+    def _req(self, *, host: str | None = None, origin: str = "", remote: str = "127.0.0.1"):
+        from unittest.mock import MagicMock
+
+        request = MagicMock()
+        headers = {}
+        if host is not None:
+            headers["Host"] = host
+        if origin:
+            headers["Origin"] = origin
+        request.headers = headers
+        request.remote = remote
+        request.app = {"allowed_origins": set(self._ALLOWED)}
+        return request
+
+    @pytest.mark.parametrize(
+        "host",
+        [
+            "[0:0:0:0:0:0:0:1]:5476",
+            "[0:0:0:0:0:0:0:1]",
+            "[0000::0001]:5476",
+            "localhost.:5476",
+            "localhost.",  # default port 80, no port in Host
+            "LOCALHOST.:80",
+        ],
+    )
+    def test_check_host_accepts_canonical_spellings(self, host: str) -> None:
+        assert check_host(self._req(host=host)) is True
+
+    @pytest.mark.parametrize(
+        "host",
+        [
+            "localhost..:5476",
+            "localhost..",
+            ".:5476",
+            "[::2]:5476",
+            "[0:0:0:0:0:0:0:2]:5476",
+            "[::ffff:10.0.0.1]:5476",  # IPv4-mapped, not loopback
+            "[::ffff:127.0.0.2]:5476",  # mapped, not in the allowed set
+            "[::1:5476",  # unclosed bracket
+            "[0:0:0:0:0:0:0:1",
+            "[localhost]:5476",  # bracketed non-IPv6
+            "[::1]x:5476",
+            "[::1]:",
+            "[::1]:54a6",
+            "0:0:0:0:0:0:0:1",  # bare IPv6
+            "localhost:",
+            "localhost:abc",
+            "127.0.0.1.:5476",  # IP literal with a dot is not a DNS name
+            "127.000.000.001:5476",
+            "10.0.0.1:5476",
+            "evil.com.:5476",
+            ":5476",
+            "[::1%eth0]:5476",
+        ],
+    )
+    def test_check_host_still_refuses(self, host: str) -> None:
+        assert check_host(self._req(host=host)) is False
+
+    @pytest.mark.parametrize(
+        "origin",
+        [
+            "http://[0:0:0:0:0:0:0:1]:5476",
+            "http://localhost.:5476",
+            "http://LOCALHOST.:5476",
+            "http://127.0.0.1:5476",
+            "http://localhost.",  # matches allowed "http://localhost" (port 80)
+        ],
+    )
+    def test_check_origin_accepts_canonical_spellings(self, origin: str) -> None:
+        assert check_origin(self._req(origin=origin)) is True
+
+    @pytest.mark.parametrize(
+        "origin",
+        [
+            "http://localhost..:5476",
+            "http://localhost.:80",  # ports match exactly: ":80" is not "no port"
+            "http://localhost.:5477",
+            "https://localhost.:5476",  # scheme must match
+            "http://[0:0:0:0:0:0:0:2]:5476",
+            "http://[::ffff:10.0.0.1]:5476",
+            "http://[::1:5476",
+            "http://[localhost]:5476",
+            "http://evil.com.:5476",
+            "http://10.0.0.1:5476",
+            "http://127.0.0.1.:5476",
+            "http://:5476",
+        ],
+    )
+    def test_check_origin_still_refuses(self, origin: str) -> None:
+        assert check_origin(self._req(origin=origin)) is False
+
+    def test_same_origin_fallback_canonical(self) -> None:
+        """Origin == Host on an unlisted loopback port, spelled differently."""
+        req = self._req(origin="http://[0:0:0:0:0:0:0:1]:7779", host="[::1]:7779")
+        assert check_origin(req) is True
+        req = self._req(origin="http://localhost.:7779", host="localhost:7779")
+        assert check_origin(req) is True
+
+    @pytest.mark.parametrize(
+        "origin, host",
+        [
+            ("http://localhost.:7779", "localhost:7780"),  # port differs
+            ("http://localhost.:7779", "localhost"),
+            ("http://localhost..:7779", "localhost..:7779"),  # not loopback
+            ("http://[::ffff:10.0.0.1]:7779", "[::ffff:10.0.0.1]:7779"),
+            ("http://[::1]:7779", "[::1:7779"),  # malformed Host
+            ("http://evil.com.:7779", "evil.com:7779"),
+        ],
+    )
+    def test_same_origin_fallback_still_refuses(self, origin: str, host: str) -> None:
+        assert check_origin(self._req(origin=origin, host=host)) is False
 
 
 class TestFrameAncestorsValue:

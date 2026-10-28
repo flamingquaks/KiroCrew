@@ -1,7 +1,7 @@
 """Sections that configure the gateway's background services.
 
 Owns the DTOs and defaults for ``taskrunner``, ``messaging``,
-``cron_history``, ``monitoring``, ``heartbeat`` and ``watchdog``. The monitoring
+``cron_history``, ``monitoring``, ``heartbeat``, ``watchdog`` and ``power``. The monitoring
 runtime bounds come from ``monitoring.limits``, their single owner.
 ``config.sections`` re-exports every name; this module never imports it, the
 loader, schema or validation.
@@ -13,6 +13,11 @@ from dataclasses import dataclass, field
 
 from kiro_crew.config.fields import _meta, field_default
 from kiro_crew.monitoring.limits import DEFAULT_RUNTIME_CEILING_SECS, MAX_RUNTIME_CEILING_SECS
+from kiro_crew.work_vocab import (
+    WORK_MAX_DEPTH_DEFAULT,
+    WORK_MAX_DEPTH_MAX,
+    WORK_MAX_DEPTH_MIN,
+)
 
 DEFAULT_MAX_PARALLEL_STEPS = (
     0  # 0 = auto: host memory over the per-agent cost (compute_memory_sized_parallel_cap)
@@ -325,5 +330,67 @@ class WatchdogConfig:
             "Wellness sample interval (s)",
             "Minimum spacing between CPU/IO counter samples used for movement "
             "deltas in the liveness oracle.",
+        ),
+    )
+
+
+@dataclass
+class WorkLedgerConfig:
+    """Work-ledger nesting (``work_ledger_records.MAX_DEPTH``, read through ``may_conduct``)."""
+
+    max_depth: int = field(
+        default=WORK_MAX_DEPTH_DEFAULT,
+        metadata=_meta(
+            "Max conducting depth",
+            "How many levels of the work ledger may conduct: depth 0 is the root, so 2 "
+            "(the default) lets a root dispatch one level of conductors whose own items "
+            "are workers, and 3 lets those conductors dispatch conductors of their own. "
+            f"Accepted range {WORK_MAX_DEPTH_MIN}-{WORK_MAX_DEPTH_MAX}; a value outside it is "
+            "refused at load with a warning and the default applies, it is never "
+            "clamped. Each extra level multiplies sessions (three levels of three items "
+            "is 27), so raise it only where concurrency is already capped per level. "
+            "Lowering it does not touch ledgers already open: new ledgers and new items "
+            "at the levels it removes are refused.",
+        ),
+    )
+
+
+#: ``power.on_battery`` values. ``normal`` ignores the power source.
+ON_BATTERY_NORMAL = "normal"
+ON_BATTERY_REDUCED = "reduced"
+ON_BATTERY_PAUSED = "paused"
+ON_BATTERY_MODES = (ON_BATTERY_NORMAL, ON_BATTERY_REDUCED, ON_BATTERY_PAUSED)
+
+
+def normalize_on_battery(value: object) -> str:
+    """``power.on_battery`` as a known mode; anything else is ``normal``.
+
+    An unknown value keeps today's behaviour rather than guessing a throttle: a
+    typo must never silently stop background work.
+    """
+    if isinstance(value, str) and value.strip().lower() in ON_BATTERY_MODES:
+        return value.strip().lower()
+    return ON_BATTERY_NORMAL
+
+
+@dataclass
+class PowerConfig:
+    """What Knowledge Library background sweeps do while this machine runs on battery."""
+
+    on_battery: str = field(
+        default=ON_BATTERY_NORMAL,
+        metadata=_meta(
+            "On battery",
+            "What Knowledge Library background sweeps do while this machine "
+            "runs on battery; nothing else reads it yet. 'normal' (the default) "
+            "ignores the power source. 'reduced' cuts each sweep's chunk budget "
+            "to a quarter, at least 10 chunks and never more than the "
+            "configured budget. 'paused' skips the sweeps until the machine is "
+            "back on mains. A document you add yourself always ingests; a folder "
+            "you add ingests its first paced batch at once, and the rest of a "
+            "large folder arrives with the sweeps, so under 'paused' it waits "
+            "for mains. A host that cannot report its power source counts as "
+            "plugged in.",
+            enum=list(ON_BATTERY_MODES),
         ),
     )

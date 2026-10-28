@@ -127,7 +127,7 @@ recorded in `.github/black-baseline.txt` and exempted; every other file must be
 clean, and a file that *becomes* clean must be pruned from the list, so it only
 ever shrinks. Prune with `python3 scripts/check_black_formatting.py
 --update-baseline`; it refuses unless the installed black equals the
-`pyproject.toml` pin (`black==26.3.1`). The read-only check does not need the pin. Format what you touched with
+`pyproject.toml` pin (`black==26.10.1`). The read-only check does not need the pin. Format what you touched with
 `black --target-version py310 <paths>`, never the whole tree.
 
 **On macOS, run `mypy --platform linux src/kiro_crew`.** CI type-checks on Linux, and
@@ -263,8 +263,9 @@ functions taking `self`, and the body binds each as a one-line attribute
 with no new mixin or base class (`src/kiro_crew/acp/session_handle_class.py`). A member
 that uses zero-argument `super()`, `__class__` or a name-mangled attribute stays in the
 body. Keep `__module__` and `__qualname__` wherever anything reads them: moved exception
-classes keep the facade's name because error text renders it, and a family-scoped helper
-(`_own_methods` there) renames each bound function `<Class>.<name>`. An owner logs under
+classes keep the facade's name because error text renders it, and the shared helper
+`kiro_crew._facade_bindings.own_methods(cls, owners)` renames each function the class binds
+from a module in its explicit owner set `<Class>.<name>`. An owner logs under
 the original module's logger, `logging.getLogger("kiro_crew.<original>")`: the log format
 prints the logger name, and `caplog` tests filter on it.
 

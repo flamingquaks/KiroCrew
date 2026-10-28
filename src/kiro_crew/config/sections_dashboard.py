@@ -527,7 +527,9 @@ class DashboardConfig:
             "task is not interrupted by the machine going to sleep. Off by default. "
             "Uses caffeinate on macOS, systemd-inhibit on Linux, and "
             "SetThreadExecutionState on Windows; on a host with no keep-awake "
-            "backend it is a no-op.",
+            "backend it is a no-op. On some Windows laptops (Modern Standby), "
+            "locking the screen can still let it sleep, so keep the screen on "
+            "for long tasks.",
         ),
     )
     quick_send: bool = field(
@@ -887,6 +889,21 @@ class DashboardConfig:
             "suppresses the popup for the version it names. Validated as one "
             "atomic record by the PATCH allowlist (dashboard.update_nudge); "
             "no Settings control reads it, so it carries no schema properties.",
+        ),
+    )
+    translucent_panels: str = field(
+        default="",
+        metadata=_meta(
+            "Translucent Panels",
+            "Show the top bar, the tab bar, the message box, the suggestion chips and "
+            "the search fields as frosted glass over the content that scrolls under "
+            "them (the Liquid Glass primitive): 'on', or 'off' for solid cards. "
+            "Empty = never chosen on this workspace (the browser's own stored choice "
+            "holds, as before the setting was server-backed). Stored here like the "
+            "theme mode, not only in the browser, so the choice follows the user "
+            "across ports, browsers and the desktop app; the browser keeps a copy "
+            "only so the first paint already matches.",
+            enum=["", "on", "off"],
         ),
     )
     onboarded: bool = field(

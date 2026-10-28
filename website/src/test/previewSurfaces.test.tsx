@@ -555,7 +555,7 @@ describe('Settings > Developer > Feature Previews', () => {
     // Awaited: the Decisions card is not drawn until the governance read
     // (`decisions_enabled`) lands, so the last switch arrives a tick late.
     await waitFor(() => {
-      expect(screen.getAllByRole('switch')).toHaveLength(6)
+      expect(screen.getAllByRole('switch')).toHaveLength(8)
     })
     const anchors = container.querySelectorAll(`[data-setting-key="${FEATURE_PREVIEWS_HIGHLIGHT_ANCHOR}"]`)
     expect(anchors).toHaveLength(1)
@@ -571,7 +571,7 @@ describe('Settings > Developer > Feature Previews', () => {
     // The Dynamic Dashboard is on for every reader, so it has no preview card.
     // Automatic cards is a server setting with its own card on the Developer tab.
     renderTab()
-    await waitFor(() => { expect(screen.getAllByRole('switch')).toHaveLength(6) })
+    await waitFor(() => { expect(screen.getAllByRole('switch')).toHaveLength(8) })
     expect(screen.queryByRole('switch', { name: /^dynamic dashboard$/i })).toBeNull()
     expect(screen.queryByRole('switch', { name: /automatic cards for all sessions/i })).toBeNull()
   })
@@ -640,16 +640,6 @@ describe('Settings > Developer > Feature Previews', () => {
     expect(screen.getByTestId('loc').textContent).toBe(
       `REPLACE /settings/developer?highlight=key%3A${FEATURE_PREVIEWS_HIGHLIGHT_ANCHOR}`,
     )
-  })
-
-  it('signposts the move from the rail footer, to the same ringed section', () => {
-    // The redirect only catches a URL that still names the old tab. Someone
-    // who navigates by memory (rail > Developer) finds the tab gone, so the
-    // footer every tab shares points onward — and to the SAME target as the
-    // redirect, so the two doors cannot drift apart.
-    render(<MemoryRouter initialEntries={['/developer?tab=config']}><DeveloperPage /></MemoryRouter>)
-    const link = screen.getByRole('link', { name: /feature previews moved to settings > developer/i })
-    expect(link.getAttribute('href')).toBe(`/settings/developer?highlight=key%3A${FEATURE_PREVIEWS_HIGHLIGHT_ANCHOR}`)
   })
 
   it('leaves every other Developer tab link alone', () => {

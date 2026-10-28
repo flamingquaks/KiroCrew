@@ -626,18 +626,6 @@ _CREW_SECRET_LEAVES: list[str] = [
     # ``/api/decisions/consent`` handler is the only writer and opens the path
     # directly, not through this gate.
     "decisions_consent.json",
-    # Recorded consent to deliver a file whose contents the credential scanner
-    # flagged. Same class of control as ``aws_service_consent.json`` above: the
-    # record is what AUTHORIZES a flagged file past four independent content
-    # gates, so an agent that could write it would consent on the owner's behalf
-    # to shipping the owner's secrets. Reading it is fenced too -- the file says
-    # which delivery destinations the owner has already blessed, which tells an
-    # agent where a flagged file would land unrefused, and that is reconnaissance
-    # it should not get for free from the shared gate. The authenticated,
-    # owner-gated dashboard ``/api/file-delivery/consent`` handler is the ONLY
-    # writer and opens the path directly, not through this gate, so it keeps
-    # working; there is deliberately no CLI verb to fence.
-    "file_delivery_consent.json",
     "ssh_auth_sock_consent.json",
     # The owner's credential-redaction switch. Same class of control as the
     # consent records above: the record is what AUTHORIZES the credential scrubber
@@ -649,20 +637,6 @@ _CREW_SECRET_LEAVES: list[str] = [
     # ``/api/security/credential-redaction`` handler is the only writer and opens
     # the path directly, not through this gate.
     "credential_redaction.json",
-    # The single-use step-up nonce that authorizes RECORDING a flagged-file
-    # delivery grant. A whole DIRECTORY, not a leaf file, because arming writes a
-    # sibling ``.tmp`` and renames it into place. It lives in its OWN top-level
-    # leaf rather than under ``trust/`` on purpose: ``trust/`` is sandbox-VISIBLE
-    # (it holds SEL append targets an in-sandbox MCP server writes), so a
-    # prompt-injected agent could FORGE a nonce there with a runtime-constructed
-    # shell path (the acknowledged evadable tier) and then drive the owner's
-    # loopback browser to POST that chosen nonce -- recording a grant with no
-    # human present. This leaf has NO in-sandbox reader (the gateway writes it on
-    # arm, the host ``kirocrew file-delivery approve`` reads it), so it is also
-    # bind-masked in ``sandbox._CREW_HIDDEN_LEAVES``; masking is what actually
-    # closes the forge path, since the text/argv file gate alone does not stop a
-    # runtime-constructed shell write.
-    "file-delivery-consent-pending",
     "token_signing.key",
     "refresh_chains.json",
     # The staging directory the two leaves above publish through. Both are masked as
@@ -1296,6 +1270,16 @@ _WRITE_PROTECTED_HOME_PATHS += [_KIRO_AGENTS_DIR]
 # specs in the agents-dir format, fenced like it. Only gateway handlers write it, directly.
 _KIRO_MATE_AGENTS_DIR = ".kiro/mates/agents"
 _WRITE_PROTECTED_HOME_PATHS += [_KIRO_MATE_AGENTS_DIR]
+# Its siblings: who owns each crewmate file, kit records, revoked approvals, the
+# tool-access record and the migration ledger. Only gateway handlers write them.
+_KIRO_MATE_STATE_LEAVES: tuple[str, ...] = (
+    ".kiro/mates/owners.json",
+    ".kiro/mates/kits",
+    ".kiro/mates/revoked-approvals.json",
+    ".kiro/mates/tool-access.json",
+    ".kiro/mates/migrated.json",
+)
+_WRITE_PROTECTED_HOME_PATHS += list(_KIRO_MATE_STATE_LEAVES)
 
 
 # ── kiro-cli global MCP registry (~/.kiro/settings/mcp.json) ──
@@ -1345,13 +1329,14 @@ _KIRO_CLI_WRITE_TIER_LEAVES: tuple[str, ...] = (
     _KIRO_AGENTS_DIR,
     _KIRO_SETTINGS_MCP_JSON,
     _KIRO_MATE_AGENTS_DIR,
+    *_KIRO_MATE_STATE_LEAVES,
 )
 
 
 # Other harnesses' own permission files: the same threat, anchored like the leaves above.
 _NATIVE_ALLOW_STORE_LEAVES: tuple[str, ...] = native_allow_stores.home_leaves()
 _WRITE_PROTECTED_HOME_PATHS += list(_NATIVE_ALLOW_STORE_LEAVES)
-_native_store_write = native_allow_stores.matches_store  # a project's claude settings
+_native_store_write = native_allow_stores.matches_store  # a project's own harness config
 
 _WRITE_PROTECTED_HOME_PATHS += [
     # Operator-authored panel templates (agent_panel.py). WRITE-protected rather

@@ -365,9 +365,17 @@ class TestFileLock:
     def test_shared_lock_round_trips(self, tmp_path):
         lock = tmp_path / ".test-sh.lock"
         lock.write_text("")
-        with open(lock, "r") as fh:
-            with pc.file_lock(fh.fileno(), exclusive=False):
-                pass  # no exception = pass
+        other = os.open(str(lock), os.O_RDWR)
+        try:
+            with open(lock, "r") as fh:
+                with pc.file_lock(fh.fileno(), exclusive=False):
+                    pass
+                # Leaving the block released the lock while fh is still open: a
+                # second descriptor takes it exclusively at once.
+                assert pc.try_acquire_lock(other, exclusive=True) is True
+                pc.release_lock(other)
+        finally:
+            os.close(other)
 
     def test_flock_exclusive_alias_runs_body(self, tmp_path):
         lock = tmp_path / ".test-ex.lock"
@@ -382,10 +390,15 @@ class TestFileLock:
         # The fd-handoff form (cron_history) — acquire now, release later.
         lock = tmp_path / ".test-pair.lock"
         fd = os.open(str(lock), os.O_WRONLY | os.O_CREAT, 0o600)
+        other = os.open(str(lock), os.O_WRONLY)
         try:
             pc.acquire_lock(fd, exclusive=True)
+            assert pc.try_acquire_lock(other, exclusive=True) is False, "the lock is held"
             pc.release_lock(fd)
+            assert pc.try_acquire_lock(other, exclusive=True) is True, "release freed it"
+            pc.release_lock(other)
         finally:
+            os.close(other)
             os.close(fd)
 
     def test_try_acquire_lock_succeeds_on_free_file(self, tmp_path):
@@ -679,8 +692,11 @@ class TestProcessCwd:
 
         monkeypatch.setattr(subprocess, "run", explode)
         monkeypatch.setattr(subprocess, "Popen", explode)
-        pc.process_cwd(os.getpid())
-        pc.process_cwd(2_000_000_000)
+        cwd = pc.process_cwd(os.getpid())
+        # The answer still comes back without a subprocess (None only on a host
+        # with neither /proc nor libproc, which test_returns_own_cwd skips on).
+        assert cwd is None or os.path.samefile(cwd, os.getcwd())
+        assert pc.process_cwd(2_000_000_000) is None
 
     @staticmethod
     def _fake_libproc(path: bytes, *, filled: int | None = None):
@@ -764,25 +780,6 @@ class TestFindListeningPids:
                 assert os.getpid() in pids
         finally:
             s.close()
-
-    def test_linux_per_process_probe_runs_on_every_runner(self, tmp_path, monkeypatch):
-        proc_root = tmp_path / "proc"
-        (proc_root / "net").mkdir(parents=True)
-        (proc_root / "4242" / "fd").mkdir(parents=True)
-        (proc_root / "4242" / "fd" / "7").touch()
-        (proc_root / "net" / "tcp").write_text(
-            "header\n"
-            "0: 0100007F:1E61 00000000:0000 0A 00000000:00000000 "
-            "00:00000000 00000000 1000 0 12345\n",
-            encoding="ascii",
-        )
-        (proc_root / "net" / "tcp6").write_text("header\n", encoding="ascii")
-        monkeypatch.setattr(pc, "IS_WINDOWS", False)
-        monkeypatch.setattr(pc, "IS_LINUX", True)
-        monkeypatch.setattr(pc, "IS_POSIX", True)
-        monkeypatch.setattr(pc.os, "readlink", lambda path: "socket:[12345]")
-
-        assert pc.process_owns_loopback_listener(4242, 7777, proc_root=proc_root) is True
 
     def test_windows_listener_probe_marks_browser_capable(self, monkeypatch):
         """Use real Windows/Darwin attribution there; both synthetic shapes elsewhere."""
@@ -1050,13 +1047,17 @@ class TestUtf8Console:
         assert os.environ["PYTHONUTF8"] == "1"
         assert os.environ["PYTHONIOENCODING"] == "utf-8:backslashreplace"
 
-    def test_ensure_utf8_console_is_safe_to_call(self):
+    def test_ensure_utf8_console_is_safe_to_call(self, monkeypatch):
         # Publishes the child environment on every OS and reconfigures the
         # current stdout/stderr only on Windows. Either way it must never raise
         # (it swallows non-reconfigurable streams), and must be idempotent (safe
         # to call from both __main__ and cli.main).
+        monkeypatch.setenv("PYTHONUTF8", "0")
+        monkeypatch.setenv("PYTHONIOENCODING", "cp1252")
         pc.ensure_utf8_console()
         pc.ensure_utf8_console()
+        assert os.environ["PYTHONUTF8"] == "1"
+        assert os.environ["PYTHONIOENCODING"] == "utf-8:backslashreplace"
 
     def test_emoji_print_does_not_raise_after_call(self, capsys):
         # The bug this guards: KiroCrew prints non-ASCII glyphs everywhere, and on
@@ -1118,7 +1119,7 @@ class _TtyTextIOWrapper(io.TextIOWrapper):
 
 
 class TestLineBufferedStdout:
-    STATUS_LINE = "👻 Kiro Crew gateway starting…"
+    STATUS_LINE = "👻 Kiro Crew gateway running — press Ctrl+C to stop"
 
     def test_status_line_reaches_a_non_tty_stdout_as_printed(self, monkeypatch):
         # A pipe or a file (the journal under systemd, the Desktop supervisor's

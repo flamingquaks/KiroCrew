@@ -265,6 +265,15 @@ def build_message(
             _member_slug = None
         if _member_slug is not None:
             ctx.read_member_rules(_member_slug, member)
+            # A V1 member's WARM turn carries no member section, so the one line
+            # that changes between turns -- a dashboard field that stopped resolving
+            # -- is added here. A V2 member's essentials already rebuild it.
+            if not ctx._desk_withheld(execution_context, desk_member):
+                from kiro_crew import dashboard_agentic
+
+                _dashboard_notice = dashboard_agentic.unresolved_notice(_member_slug, member)
+                if _dashboard_notice:
+                    parts.append(_dashboard_notice + "\n\n")
 
     # Session context on first message only
     if is_new_session:
@@ -340,17 +349,13 @@ def build_message(
             # provenance) WITHOUT touching the trusted critical-rules block
             # that build_session_context prepends as parts[0] — that block
             # legitimately carries [CRITICAL RULES]/[END CRITICAL RULES] and
-            # must survive intact. The block is one of two fixed module
-            # constants (runtime-selected, never templated) and is always
-            # the prefix (only tail-truncation ever trims the string), and
+            # must survive intact. The block is one of the fixed module
+            # constants in _CRITICAL_RULES_VARIANTS (runtime-selected,
+            # never templated) and is always the prefix (only tail-truncation ever trims the string), and
             # none of the other trusted framing uses these markers, so
             # scrubbing everything after the block is safe.
             _rules_prefix = next(
-                (
-                    rb
-                    for rb in (ctx._CRITICAL_RULES, ctx._CRITICAL_RULES_CHANNEL)
-                    if session_ctx.startswith(rb)
-                ),
+                (rb for rb in ctx._CRITICAL_RULES_VARIANTS if session_ctx.startswith(rb)),
                 None,
             )
             if _rules_prefix is not None:
@@ -403,11 +408,22 @@ def build_message(
             elif minimal_context:
                 parts.append(session_ctx)
             else:
+                # An empty group set means the spawning parent withheld memory,
+                # lessons and project, so the block holds only conduct; claiming
+                # "your memory" there makes the child look for content it lacks.
+                _opener = (
+                    "This block holds the rules and runtime facts for this turn. "
+                    "Use it to stay consistent but ONLY respond to the "
+                    if context_groups is not None and not context_groups
+                    else "This is your memory, lessons, and conversation history from prior "
+                    "sessions. Use it to stay consistent but ONLY respond to the "
+                )
                 parts.append(
                     "[SESSION CONTEXT — background reference only, NOT a task to act on.\n"
-                    "This is your memory, lessons, and conversation history from prior "
-                    "sessions. Use it to stay consistent but ONLY respond to the "
-                    "CURRENT USER REQUEST below.]\n" + session_ctx + "[END OF SESSION CONTEXT]\n\n"
+                    + _opener
+                    + "CURRENT USER REQUEST below.]\n"
+                    + session_ctx
+                    + "[END OF SESSION CONTEXT]\n\n"
                 )
         # Folder-inherited steering: the ONE delivery seam for every
         # provider. No is_cc / is_custom gate on purpose -- kiro-cli,

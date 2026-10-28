@@ -4,16 +4,16 @@
   "counts": {
     "smoke": 42,
     "nightly": 167,
-    "native-only": 12,
+    "native-only": 13,
     "needs-secret": 27,
     "excluded": 23,
-    "total": 271
+    "total": 272
   },
   "priorities": {
     "P0": 10,
     "P1": 35,
     "P2": 162,
-    "P3": 62
+    "P3": 63
   },
   "per_feature": {
     "chat": {
@@ -236,7 +236,7 @@
     "settings": {
       "smoke": 12,
       "nightly": 29,
-      "native-only": 3,
+      "native-only": 4,
       "needs-secret": 0,
       "excluded": 4
     },
@@ -2051,24 +2051,24 @@
     {
       "id": "sidebar-crew-members-create-menu-entry",
       "feature": "members",
-      "title": "Sidebar create menu 'Mates' routes by preview flag",
-      "user_story": "As a user, I want the Mates menu entry to open the page or the setting that enables it, so that I can find the feature either way.",
-      "start_url": "/chat",
-      "entry_path": "Sidebar New button's chevron ('More create options') > Mates (data-testid open-crew-members) > lands on /members or Settings > Developer > Feature Previews (Mates card)",
+      "title": "Mates page is reached through its preview card",
+      "user_story": "As a user, I want to turn on the Mates preview and find its rail row, so that I can open the page.",
+      "start_url": "/settings/developer",
+      "entry_path": "Settings > Developer > Feature Previews > Mates card toggle on > rail row 'Mates' appears > lands on /members",
       "preconditions": {
         "seed": "minimal",
         "members": [],
         "feature_flags": [
           "mc-preview-crew"
         ],
-        "notes": "Entry is always rendered; PREVIEW_CREW only decides destination (openCrewMembers in chat-sidebar/create.ts). Run once with the flag on and once off. The menu entry and the Feature Previews card are both labelled 'Mates'."
+        "notes": "The sidebar New menu carries no Mates entry; with PREVIEW_CREW off the page is reached only by turning its Feature Previews card on. Toggling the card shows the rail row without a reload."
       },
       "runnable": "nightly",
       "estimated_steps": 3,
-      "rationale": "Two-branch navigation check starting from /chat, distinct from the members page flow; both branches run headless.",
+      "rationale": "Checks the only ingress to a preview-gated page now that the create menu has no Mates entry; runs headless.",
       "source": [
-        "website/src/pages/ChatSidebar.tsx",
-        "website/src/pages/chat-sidebar/create.ts",
+        "website/src/pages/settings/FeaturePreviewsSection.tsx",
+        "website/src/shell/nav/appRail.tsx",
         "website/src/utils/previewFlags.ts"
       ],
       "priority": "P2",
@@ -6985,6 +6985,33 @@
       "component": "website/src/pages/settings/DeveloperPanel.tsx"
     },
     {
+      "id": "settings-display-keep-running-when-closed-toggle",
+      "feature": "settings",
+      "title": "Toggle Keep running in the background after closing the window",
+      "user_story": "As a desktop user who does not want the app left in the tray, I want the window close button to quit the app, so that closing the window ends it like other apps.",
+      "start_url": "/settings/display/view",
+      "entry_path": "Settings > Display > View > Desktop app > Keep running in the background after closing the window toggle",
+      "preconditions": {
+        "seed": "minimal",
+        "members": [],
+        "feature_flags": [],
+        "notes": "Section only renders in the desktop app's main window (local or remote gateway), because it controls that window's close button; connection windows do not show it. Takes effect on the next close."
+      },
+      "runnable": "native-only",
+      "estimated_steps": 4,
+      "rationale": "Desktop-app-only section; not degradable to web because it is hidden without Electron, and the behaviour is the native window close.",
+      "source": [
+        "website/src/pages/settings/DisplayPanel.tsx",
+        "website/src/hooks/useCloseAction.ts",
+        "website/electron/close-action.js"
+      ],
+      "priority": "P3",
+      "merged_from": [
+        "settings-display-keep-running-when-closed-toggle"
+      ],
+      "component": "website/src/pages/settings/DisplayPanel.tsx"
+    },
+    {
       "id": "settings-notifications-background-chat-finished",
       "feature": "settings",
       "title": "Toggle Notify when a background chat finishes",
@@ -7153,7 +7180,7 @@
         "seed": "minimal",
         "members": [],
         "feature_flags": [],
-        "notes": "Add and remove one user rule; file-delivery consent has no panel yet. | SECURITY_SECTIONS in SecurityPanel.tsx; approval mode also cycled by keyboard shortcut in App.tsx. | Rendered from GET /api/security/posture registry via PostureDisclosureRow."
+        "notes": "Add and remove one user rule. | SECURITY_SECTIONS in SecurityPanel.tsx; approval mode also cycled by keyboard shortcut in App.tsx. | Rendered from GET /api/security/posture registry via PostureDisclosureRow."
       },
       "runnable": "smoke",
       "estimated_steps": 3,

@@ -359,12 +359,9 @@ def run_script_sandboxed(
         # ~/.pypirc open to the child, while a fixed command has always run
         # ``cc``. The static body vet cannot be the fence (its own docstring
         # says so and names the sandbox as the runtime control), so the two
-        # cron spawn paths are aligned on ``cc`` here. ``cc`` is the Claude
-        # Code provider's tier, and on macOS it deliberately leaves ``~/.aws``
-        # readable for that provider's Bedrock ``credential_process`` auth
-        # (see ``sandbox._seatbelt_profile``); a cron borrowing the tier
-        # inherits that residual, which is the same exposure the command path
-        # has always had there. A script that needs a host credential takes
+        # cron spawn paths are aligned on ``cc`` here. ``cc`` hides ``~/.aws``
+        # on both Linux and macOS and keeps only ``~/.aws/config`` readable,
+        # so ``credential_process`` auth still resolves. A script that needs a host credential takes
         # the existing route an operator already approves per job: a vault
         # secret_env grant, which runs ``strict`` and injects the one approved
         # secret instead of exposing a store.
@@ -1110,6 +1107,8 @@ if TYPE_CHECKING:  # the names an owner serves, for type checkers and IDEs
         ScriptContext,
         Skip,
         SkipError,
+        _redact_deep,
+        _redact_pair,
         _refusal_code,
         logger,
     )
@@ -1185,6 +1184,7 @@ if TYPE_CHECKING:  # the names an owner serves, for type checkers and IDEs
     from kiro_crew.security import (  # noqa: F401
         _REDACTED_CREDENTIAL_TAG,
         _STREAM_HOLDBACK_JWT_MAX,
+        REDACTED_CREDENTIAL_TAG,
         is_unverifiable_path_refusal,
         sensitive_path_refusal,
     )

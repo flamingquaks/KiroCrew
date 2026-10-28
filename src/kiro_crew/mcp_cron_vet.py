@@ -496,10 +496,8 @@ def _vet_script_contents(text: str) -> str | None:
     ``resolve_script_path`` validates only the *path*, so without this the body
     is never inspected. An ungranted script runs under ``mode="cc"`` and a
     secret-granted one under ``strict``. ``cc`` hides the credential stores on
-    Linux; on macOS it deliberately leaves ``~/.aws`` readable (it is the
-    Claude Code provider's tier, and that provider authenticates to Bedrock
-    through ``credential_process`` under ``~/.aws``), and Windows has no OS
-    sandbox backend at all. So a body that names ``~/.aws/credentials`` or
+    Linux and macOS (only ``~/.aws/config`` stays readable), but Windows has no
+    OS sandbox backend at all and the sandbox can be turned off. So a body that names ``~/.aws/credentials`` or
     ``os.environ["AWS_SECRET_ACCESS_KEY"]`` and POSTs it out is worth refusing
     at storage time rather than relying on one runtime control alone.
     Credential exfiltration -- which a human rubber-stamping the ``cron_add``
@@ -740,12 +738,11 @@ def vet_job_at_fire_time(job: CronJob) -> str | None:
         # existed still runs after it -- measured, `_vet_command_governance`
         # (the only fire-time check a command had) ALLOWS
         # `set -B; cat ~/.a{w,w}s/creds` while `_vet_shell_command` refuses it,
-        # so the storage-time half of this change simply did not reach the
-        # installed base. Deny semantics here are the right ones for that: the
-        # run fails, the job is KEPT, and the refusal is audited rather than
-        # silent -- which also makes the newly-refused shapes (a quoted regex
-        # interval, say) surface as a legible audited failure instead of a job
-        # that quietly stops matching policy.
+        # so a storage-time refusal alone does not reach the installed base.
+        # Deny semantics here are the right ones for that: the run fails, the job is KEPT,
+        # and the refusal is audited rather than silent -- which also makes the
+        # newly-refused shapes (a quoted regex interval, say) surface as a legible audited
+        # failure instead of a job that quietly stops matching policy.
         reason = _vet_shell_command(job.command, governance_checked=True)
         if reason:
             _audit_fire_time_decision(job.id, "cron_command_body", "denied", reason)

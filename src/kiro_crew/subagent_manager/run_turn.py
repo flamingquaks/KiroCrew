@@ -660,10 +660,16 @@ async def _run_inner_impl(
         provider_type=self._manager._provider_label_of(client),
         model_window=_sub_window,
         context_groups=_groups,
+        # Triggers read only the task the parent wrote, not the sub-agent
+        # prefix, the resume preamble or the MCP notice prepended above.
+        skill_trigger_text=raw_task,
         blocks_reads=info.memory_mode == "temporary",
         context_provider=client,
         agent=agent or None,
         resumed=_resumed,
+        # A parent agent reads this reply, not a person at a dashboard, so the
+        # [OPTIONS:] and card guidance has nothing to render into.
+        interactive=False,
     )
     # The one place the resolved scope and its cost are both known — without
     # this, "the sub-agent didn't know X" is undebuggable after the fact.
@@ -675,6 +681,9 @@ async def _run_inner_impl(
     )
 
     result_text = ""
+    # Text streamed since the run's last tool call: the final segment the
+    # leaked-tool-call check reads at the end (see ``leaked_tool_call``).
+    _final_segment = ""
     turns = 0
     turn_limit = self._manager._effective_turn_limit(info)
     # Separate volume bound for child-origin permission escalations —
@@ -1138,8 +1147,8 @@ async def _run_inner_impl(
                 elif attempts >= TRANSIENT_RETRIES:
                     # ── Throttle-exhaustion fallback chain ──
                     # Zero-activity budget spent: walk agent.fallback_model
-                    # before surfacing (empty chain ⇒ raise exactly as
-                    # before this feature). Two attempts per candidate
+                    # before surfacing (empty chain ⇒ raise directly).
+                    # Two attempts per candidate
                     # (FALLBACK_CANDIDATE_ATTEMPTS), ~2s backoff each —
                     # NOT the exponential same-model curve; see
                     # llm_helpers Case 2.75 for the rationale.
@@ -1291,6 +1300,7 @@ async def _run_inner_impl(
                             "Failed to persist refined model for %s", info.id, exc_info=True
                         )
             result_text += event.text
+            _final_segment += event.text
             if not _attempt_has_text:
                 # The in-memory partial a stop or a cancel delivers. It
                 # keeps growing when the file cannot be written, which is
@@ -1348,6 +1358,10 @@ async def _run_inner_impl(
             if not event.sub_session_id:
                 turns += 1
                 info.turns = turns
+                # The run's own gated call is a tool-call boundary too (a
+                # backend may surface it ONLY as this request), so the
+                # final segment starts again after it.
+                _final_segment = ""
             else:
                 # Child escalation: counted toward its own volume bound
                 # here; side-effect activity (tool_count) is counted at
@@ -1460,6 +1474,7 @@ async def _run_inner_impl(
             # Count it, record it, and broadcast the same subagent_tool event
             # the permission path uses so the running-card shows live activity.
             info.tool_count += 1
+            _final_segment = ""
             info.last_tool = event.title or info.last_tool
             self._manager._note_tool_dispatch(info, event)
             await self._manager._fire_event(
@@ -1521,6 +1536,9 @@ async def _run_inner_impl(
                         HOOK_EVENT_POST_TOOL_USE,
                         tool_name=_tool_name,
                         tool_response={"output": _out},
+                        # This child's own key, for per-session attribution;
+                        # parent_session_key below names who spawned it.
+                        session_key=session_key,
                         subagent_id=info.id,
                         parent_session_key=info.parent_session_key or None,
                         agent_role=info.agent or None,
@@ -1543,6 +1561,8 @@ async def _run_inner_impl(
 
     # Strip [OPTIONS: ...] tags and redact sensitive content
     cleaned, _ = extract_options(result_text) if result_text else (result_text, [])
+    # Read before the fallback annotation, which is not a reply.
+    _no_reply = not cleaned.strip()
     if cleaned:
         from kiro_crew.security import (
             redact_credentials,
@@ -1571,6 +1591,18 @@ async def _run_inner_impl(
     )
     info.stop_reason = _stop.stop_reason
     info.stop_class = _stop.name
+    if _stop.is_success and _final_segment:
+        # A normal end of turn whose final segment carries a tool call
+        # written as prose: the call never ran, yet the run reads as a
+        # success. Flag it for the parent, whatever the earlier tool-call
+        # count, NOTICE-ONLY like the dashboard's mixed-turn notice
+        # (should_notice_mixed_turn_leak): earlier calls may have taken
+        # effect, so the outcome stays completed and nothing is re-issued.
+        # Deferred import: a core module must not import the dashboard
+        # layer at import time.
+        from kiro_crew.dashboard.chat_utils_turn_text import has_leaked_tool_call
+
+        info.leaked_tool_call = has_leaked_tool_call(_final_segment)
     if not _stop.is_success:
         # Whatever streamed before the non-success completion is a PARTIAL:
         # preserved (result + result.txt) and flagged, never a finished
@@ -1602,6 +1634,20 @@ async def _run_inner_impl(
         info.partial = True
         # result.txt is what spawn_status / spawn_run read for a done run.
         write_result_chunk(info.id, f"\n\n{_warn}\n")
+    # The whole answer a claimed completed ending rewrites result.txt from.
+    _finished_text = result_text
+    if _stop.is_success and _no_reply and not info.made_no_tool_calls:
+        # A child that called a tool and then closed without a reply: its side
+        # effects already landed, so a bare "_No response._" invites the
+        # parent to re-spawn it and run them twice. Flag it partial and say
+        # to continue, never resend (messaging.empty_turn_copy). Added after
+        # the keep cap, like the warning above, so no keep mode cuts it off.
+        from kiro_crew.messaging.empty_turn_copy import EMPTY_TURN_NOTICE_AFTER_WORK
+
+        info.partial = True
+        _base = info.result.strip() or "_No response._"
+        info.result = f"{_base}\n\n{EMPTY_TURN_NOTICE_AFTER_WORK}"
+        _finished_text = info.result
     evict_completed_agents(self._manager._agents)
 
     # ── Per-turn usage row: attribute subagent spend. ──
@@ -1683,7 +1729,7 @@ async def _run_inner_impl(
         try:
             # result.txt rewritten whole from memory, then the flag that says
             # so (``subagent_persistence.result_is_whole``).
-            await self._manager._write_finished_result_off_loop(info, result_text)
+            await self._manager._write_finished_result_off_loop(info, _finished_text)
         except Exception:
             logger.warning("Failed to record result_complete for %s", info.id, exc_info=True)
         finally:
