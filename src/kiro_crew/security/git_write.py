@@ -293,11 +293,29 @@ def _is_git_word(word: str) -> bool:
     return _is_git(word) or bool(_dashed_git_sub(word))
 
 
-def _expand_braces(word: str, _depth: int = 0) -> list[str]:
-    """A bounded expansion of ``{a,b}`` lists in ``word``, enough to see a program name."""
+#: Most candidates a brace expansion may produce before it stops.
+_BRACE_BUDGET = 64
+
+#: What an expansion that ran over its budget reads as: a git name, so the command asks.
+_OVER_BUDGET = ["git"]
+
+
+def _expand_braces(word: str) -> list[str]:
+    """A bounded expansion of ``{a,b}`` lists in ``word``, enough to see a program name.
+
+    One budget covers the whole expansion. Running over it, or a list with more
+    parts than the budget, returns ``_OVER_BUDGET``, which reads as git.
+    """
+    out = _expand_braces_within(word, 0, [_BRACE_BUDGET])
+    return _OVER_BUDGET if out is None else out
+
+
+def _expand_braces_within(word: str, _depth: int, budget: list[int]) -> list[str] | None:
+    """``_expand_braces`` sharing ``budget``; ``None`` once the budget runs out."""
     start = word.find("{")
     if start < 0 or _depth > 4:
-        return [word]
+        budget[0] -= 1
+        return [word] if budget[0] >= 0 else None
     level = 0
     for end in range(start, len(word)):
         if word[end] == "{":
@@ -307,7 +325,8 @@ def _expand_braces(word: str, _depth: int = 0) -> list[str]:
             if level == 0:
                 break
     else:
-        return [word]
+        budget[0] -= 1
+        return [word] if budget[0] >= 0 else None
     body, head, tail = word[start + 1 : end], word[:start], word[end + 1 :]
     parts, level, last = [], 0, 0
     for i, ch in enumerate(body):
@@ -320,11 +339,15 @@ def _expand_braces(word: str, _depth: int = 0) -> list[str]:
             last = i + 1
     parts.append(body[last:])
     if len(parts) < 2:
-        return [word]
+        budget[0] -= 1
+        return [word] if budget[0] >= 0 else None
     out: list[str] = []
-    for part in parts[:16]:
-        out.extend(_expand_braces(head + part + tail, _depth + 1))
-    return out[:64]
+    for part in parts:
+        more = _expand_braces_within(head + part + tail, _depth + 1, budget)
+        if more is None:
+            return None
+        out.extend(more)
+    return out
 
 
 #: Names a glob in a program word is tried against.

@@ -606,14 +606,37 @@ def test_git_version_alone_is_a_read():
 
 
 def test_a_long_config_key_is_read_in_linear_time():
-    import time
-
     from kiro_crew.security.git_write import _CONFIG_KEY_RE
 
+    # A middle part that cannot hold a dot splits a key one way only, so a
+    # 10,002-character key is decided in one pass instead of 2**5000 tries.
+    assert r"(?:\.[^\s=.]+)*" in _CONFIG_KEY_RE.pattern
     hostile = "A." + "!." * 5000 + " "
-    started = time.monotonic()
     assert _CONFIG_KEY_RE.match(hostile) is None
-    assert time.monotonic() - started < 1.0
     long_key = "url." + ".".join(["part"] * 2000) + ".insteadOf"
     assert _CONFIG_KEY_RE.match(long_key)
     assert git_history_write("git config --get url.https://example.com/x.insteadOf") == ""
+
+
+def test_many_brace_groups_stop_at_the_budget_and_ask(monkeypatch):
+    from kiro_crew.security import git_write
+
+    calls = []
+    real = git_write._expand_braces_within
+
+    def counting(word, depth, budget):
+        calls.append(word)
+        return real(word, depth, budget)
+
+    monkeypatch.setattr(git_write, "_expand_braces_within", counting)
+    group = "{" + ",".join("abcdefghijklmnop") + "}"
+    for groups in (5, 8):
+        calls.clear()
+        command = 'echo "' + group * groups + ' x"'
+        assert git_history_write(command)
+        # The shared budget caps the work, not just the output: 16**5 words
+        # would be built without it.
+        assert len(calls) < 2000
+    assert git_write._expand_braces(group * 5) == git_write._OVER_BUDGET
+    assert git_write._expand_braces("{a,b}{c,d}") == ["ac", "ad", "bc", "bd"]
+    assert git_history_write("mkdir -p src/{a,b}/{c,d}") == ""

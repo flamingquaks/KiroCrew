@@ -564,6 +564,7 @@ class HookManager:
             "subagent_tools": (
                 before.auto_approve_subagent_tools != after.auto_approve_subagent_tools
             ),
+            "confirm_git_writes": (before.confirm_git_writes != after.confirm_git_writes),
         }
         flipped = sorted(k for k, v in flags.items() if v)
         # Removing a ``confirm_tools`` pattern widens too: the gate stops asking
