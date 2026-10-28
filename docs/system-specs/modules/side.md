@@ -289,7 +289,8 @@ The queue takes the read's entries. A card the read lacks goes when the panel
 already showed it as the read was sent (it ran or was cancelled meanwhile), and
 its id is retired like a drain's; its text is kept until a cancel for it arrives,
 so this tab's own cancel answered after the read still hands the question back
-to the composer once. A card added after the read was sent stays.
+to the composer once, even when the side was closed before that answer came.
+A card added after the read was sent stays.
 A read with no open conversation, or one that
 shares none of those runs and so describes another conversation (this one was
 closed while the tab could not hear it), stops the wait and leaves the panel's

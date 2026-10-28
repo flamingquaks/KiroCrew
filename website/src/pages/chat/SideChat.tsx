@@ -6,7 +6,7 @@ import { sendTurn, SEND_ABORT_MS, type SendReceipt } from '../../chat-core/trans
 import { sendFailureCopy, deliveryUnconfirmedCopy } from '../../chat-core/transport/receiptCopy'
 import { sideTurnWire } from './sideTurnWire'
 import { useAppSelector, useAppDispatch, useAppStore } from '../../store'
-import { beginSideQueueEdit, finishSideQueueEdit, forgetSideSteerSubmittedText, readSideSteerSubmittedText, recordSideSteerSubmittedText, setSideQueueEditDraft, sideClose, sideOptimisticAccepted, sideOptimisticAppend, sideOptimisticRollback, restoreSideConversation, awaitSideRestore, sseSideQueue, sideReleaseConsumed, sideSendStatus, queueEditBroadcastAt, stageToMainComposer, takeSideQueueDroppedByClose, takeSideSteerDroppedByClose, transcriptTsMs, type SideStandingNotice } from '../../store/chatSlice'
+import { beginSideQueueEdit, finishSideQueueEdit, forgetSideSteerSubmittedText, readSideSteerSubmittedText, recordSideSteerSubmittedText, setSideQueueEditDraft, sideClose, sideOptimisticAccepted, sideOptimisticAppend, sideOptimisticRollback, restoreSideConversation, awaitSideRestore, sseSideQueue, sideReleaseConsumed, sideSendStatus, queueEditBroadcastAt, stageToMainComposer, takeSideQueueDroppedByClose, takeSideQueueDroppedByResyncThenClose, takeSideSteerDroppedByClose, transcriptTsMs, type SideStandingNotice } from '../../store/chatSlice'
 import QueueStack from '../../components/QueueStack'
 import ChatMessageList from '../../app-sdk/ChatMessageList'
 import FollowUpBar from '../../components/FollowUpBar'
@@ -643,8 +643,10 @@ export default function SideChat({ slot, onFileOpen, onArtifactOpen }: {
     onMutate: ({ queueId }: { queueId: string; slot: string }) => { markQueuePending(queueId, true) },
     onSuccess: (res, { queueId, slot: target }) => {
       // The reducer stashes the released text and the effect above drains it, so
-      // this path and the WS frame share ONE release — restoring the draft here
-      // as well would double-append it.
+      // on an open slot this path and the WS frame share ONE release — restoring
+      // the draft here as well would double-append it. A closed slot is the
+      // exception handled below: the reducer ignores it, so that branch is the
+      // only release.
       // Prefer the raw text THIS client submitted. Both the card and the frame can
       // hold a redacted rendering (broadcasts are scrubbed on the wire), and for a
       // credential-bearing question that is a permanently corrupted restore. The
@@ -655,6 +657,17 @@ export default function SideChat({ slot, onFileOpen, onArtifactOpen }: {
       const entry = reduxSide?.queue?.find(e => e.id === queueId)
       const raw = submittedRaw.current.get(queueId)
         ?? (entry?.steerId ? readSideSteerSubmittedText(target, entry.steerId) : undefined)
+      submittedRaw.current.delete(queueId)
+      if (entry?.steerId) forgetSideSteerSubmittedText(target, entry.steerId)
+      // A re-read dropped this card and the conversation then closed, and the
+      // reducer ignores a closed slot. The cancel's text goes back to the
+      // composer from the record the close kept, once.
+      if (chatStore.getState().chat.slotSideClosed[target]) {
+        const dropped = takeSideQueueDroppedByResyncThenClose(target, queueId)
+        const released = dropped ? raw ?? (dropped.content || res.content || '') : ''
+        if (released) restoreDraftTo(target, released)
+        return
+      }
       dispatch(sseSideQueue({
         slot: target,
         action: 'cancel',
@@ -664,8 +677,6 @@ export default function SideChat({ slot, onFileOpen, onArtifactOpen }: {
         // server and is scrubbed, so marking that raw would defeat the preference.
         ...(raw !== undefined ? { raw: true } : {}),
       }))
-      submittedRaw.current.delete(queueId)
-      if (entry?.steerId) forgetSideSteerSubmittedText(target, entry.steerId)
     },
     onError: () => {
       setLocalError(i18nT('pages.chat.sideChat.queue_cancel_failed'))
