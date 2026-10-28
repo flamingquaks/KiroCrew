@@ -536,7 +536,13 @@ def _url_payload_command(n: int) -> str:
 #: Raised by 8, from 32,635, for the ``rm`` floor's program word: an unquoted
 #: ``$x`` / ``${…}`` / ``$1`` there may be unset, so ``${x}rm`` is read as ``rm``.
 #: A word already read as ``rm`` keeps that reading. Deny-only: no allow widened.
-_PACKAGE_LINE_BUDGET = 32_643
+#:
+#: Raised by 927, from 32,643, for ``git_write``: the git write classifier
+#: the dashboard approval ladder asks before a trust, YOLO or pattern grant approves
+#: a shell call (``hooks.confirm_git_writes``), with its per-subcommand option
+#: allow-lists. A new confirm classifier, not a deny tier: no existing floor or
+#: pattern changed.
+_PACKAGE_LINE_BUDGET = 33_570
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second

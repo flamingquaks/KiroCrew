@@ -605,6 +605,10 @@ class HookManager:
     def auto_approve_subagent_tools(self) -> bool:
         return self._config.auto_approve_subagent_tools
 
+    @property
+    def confirm_git_writes(self) -> bool:
+        return self._config.confirm_git_writes
+
     # ── Message hooks ──
 
     def on_message(self, text: str) -> HookResult:
