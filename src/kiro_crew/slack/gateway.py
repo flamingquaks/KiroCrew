@@ -160,6 +160,7 @@ from kiro_crew.dashboard.chat_runner import (
     _retire_sessions_on_identity_change,
     _run_chat,
     _slot_is_trusted,
+    _start_next_queued_turn,
     drain_idle_parent_queue_for_stall,
     turn_stats_meta,
 )
@@ -551,6 +552,7 @@ from kiro_crew.slack.gateway_runtime.service_boot import (
 from kiro_crew.slack.gateway_runtime.subagent_injection import (
     _MAX_INJECT_ATTEMPTS,
     _injection_slot_busy,
+    _tab_admits_drain,
 )
 from kiro_crew.slack.gateway_runtime.subagent_report import (
     SUBAGENT_DIGEST_CHUNK_SIZE,

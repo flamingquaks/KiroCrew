@@ -31,11 +31,9 @@ if TYPE_CHECKING:
         GatewayOrchestrator,
         SubagentDelivery,
         SubagentInfo,
-        _arm_queued_delivery_settlement,
         _get_agent_for_session,
-        _run_chat,
+        _start_next_queued_turn,
         _subagent_queued_count,
-        bounded_chat_turn,
         build_options_blocks,
         build_timing_footer,
         channel_namespace_of,
@@ -70,6 +68,26 @@ def _injection_slot_busy(slot: Any) -> bool:
     """
     task = slot.task
     return bool(slot.running) or (task is not None and not task.done())
+
+
+def _tab_admits_drain(state: Any, slot: Any) -> bool:
+    """Whether an idle tab may start its queued completion now, under its lock.
+
+    The same conditions a settled Stop checks before it drains a retained
+    message: the tab is still the one registered under its key, owns no turn,
+    holds no send's admission reservation, is not closing, is not held for
+    sign-in, and has no Stop in flight. Shutdown and memory preparation are
+    refused inside the drain itself.
+    """
+    return (
+        state.get_slot(slot.key) is slot
+        and not _injection_slot_busy(slot)
+        and not slot._turn_admission_reserved
+        and not slot.is_closing
+        and not slot._last_turn_auth_required
+        and not slot._stopping
+        and slot._stop_state == "idle"
+    )
 
 
 # Max attempts, the first one included, to inject a subagent result into a
@@ -146,9 +164,10 @@ async def _route_subagent_to_tab(
 ) -> None:
     """Deliver a completion into the dashboard tab that shows its parent.
 
-    An idle tab gets a ``_run_chat`` turn and a busy one a queued card; a result
-    the blocking spawn tool already returned is skipped; a tab that closed gets the
-    bell. Every exit hands the completion off or settles it.
+    The completion becomes a queued card. An idle tab drains it into a turn at
+    once; a busy one first waits for its turn, then queues it for that turn's
+    drain. A result the blocking spawn tool already returned is skipped; a tab
+    that closed gets the bell. Every exit hands the completion off or settles it.
     """
     assert self.dashboard_state is not None
     _slot_name = _injection_slot_name
@@ -319,113 +338,65 @@ async def _route_subagent_to_tab(
                 info._report_delivered = True
                 return
 
-            # Slot is idle — start _run_chat.
-            #
-            # This branch hands the digest off ASYNCHRONOUSLY: the
-            # turn is a task, and `_on_done` returns to
-            # `_report_terminal` while it is still pending — so a
-            # bare return here is a local routing success, not
-            # evidence the parent received anything. Owe
-            # the delivery bookkeeping to the turn's CONSUMPTION
-            # instead, through the same `_defer_queued_delivery`
-            # the queue branch uses: it records the debt (the
-            # completed member's own tombstone AND any held wave
-            # siblings) in the slot's content-keyed ledger, keyed
-            # on this announce, and flags `_delivery_queued` — so
-            # the run loop's `mark_delivered` and its digest-hold
-            # settle both become no-ops for this route, and the
-            # two settle paths cannot both fire.
-            #
-            # The task's own OUTCOME is deliberately not the
-            # signal: `_run_chat` returns NORMALLY on a signed-out
-            # CLI, a dead provider, exhausted retries and a first
-            # empty response — several of them after re-queueing
-            # the announce itself — so "the task finished cleanly"
-            # says nothing about delivery. Consumption does, and a
-            # failure before it re-queues the announce, whose drain
-            # claims this same content-keyed debt on the replay. An
-            # unconfirmed hand-off leaves the debt parked on
-            # purpose: a duplicate announce after a restart is
-            # visible to the parent and recoverable, a lost result
-            # is neither.
-            #
-            # Computed BEFORE the transfer (which detaches the held
-            # ids); stays False when there is nothing to owe — a
-            # failed or stopped solo member settles through its own
-            # failure tombstone, not this ledger. A memory-wait
-            # expiry is the exception: it has no tombstone, and the
-            # store owes its report until this turn consumes it.
-            _owes_delivery = bool(info._digest_settle_deliveries) or (
-                not _flush_only
-                and (info.outcome == "completed" or getattr(info, "_report_owed", False) is True)
+            # Slot is idle — hand the completion to the queue drain, the same
+            # admission path a queued completion takes at a turn's end. Starting
+            # `_run_chat` here directly would skip every gate the drain holds:
+            # gateway shutdown, pending memory preparation, a Stop still being
+            # resolved, a closing tab and a held sign-in queue. It would also
+            # let this completion run ahead of an entry already parked in the
+            # queue. The drain owns the turn's provenance (`subagent`, from the
+            # entry's kind) and settles the owed delivery marks once the model
+            # consumes the announce, through the ledger
+            # `_defer_queued_delivery` fills.
+            _injection_slot._synthesis_completion_turns += 1
+            _queue_id = _injection_slot.queue_append(
+                announce,
+                kind=SUBAGENT_COMPLETION_KIND,
+                meta={SUBAGENT_COMPLETION_META_KEY: sub_meta},
             )
             self._defer_queued_delivery(_injection_slot, announce, info, flush_only=_flush_only)
-            _consumed: list[bool] = [False]
-
-            def _note_consumed(consumed: bool = True) -> None:
-                # False is a retraction: the first empty response
-                # re-queues this exact announce verbatim, so the
-                # delivery that counts has not happened yet.
-                _consumed[0] = consumed
-
-            _run_kwargs: dict[str, Any] = {}
-            if _owes_delivery:
-                _run_kwargs["_on_consumed"] = _note_consumed
-            # One completion turn for the synthesis fire gate's
-            # count, as in the queued branch above.
-            _injection_slot._synthesis_completion_turns += 1
-            _task = asyncio.create_task(
-                bounded_chat_turn(
-                    _run_chat(
-                        self.dashboard_state,
-                        _injection_slot,
-                        announce,
-                        _directive_user_origin=False,
-                        # Structural provenance for the session
-                        # crew log: the queued twin above carries
-                        # SUBAGENT_COMPLETION_KIND, and this branch
-                        # is the same injector dispatching directly.
-                        _turn_actor="subagent",
-                        **_run_kwargs,
-                    ),
-                    state=self.dashboard_state,
-                    slot=_injection_slot,
-                )
-            )
-            _injection_slot.task = _task
-            self.dashboard_state._background_tasks.add(_task)
-            _task.add_done_callback(self.dashboard_state._background_tasks.discard)
-
-            def _on_inject_done(t: asyncio.Task) -> None:  # type: ignore[type-arg]
-                if _injection_slot.task is t:
-                    _injection_slot.task = None
-                if not t.cancelled() and t.exception():
-                    logger.error("Subagent injection _run_chat failed: %s", t.exception())
-                    if self.subagent_mgr:
-                        _reason = str(t.exception())
-                        _reason, _ = redact_exfiltration_urls(_reason)
-                        _reason, _ = redact_credentials(_reason)
-                        self.subagent_mgr.notify_injection_failed(
-                            info,
-                            reason=_reason,
+            _started = False
+            async with _injection_slot._lock:
+                # The lock wait yields, so re-read the tab after it. A refusal
+                # leaves the card queued; the next drain (a turn's end, the
+                # memory-preparation drain, Run now) delivers it in order.
+                if _tab_admits_drain(self.dashboard_state, _injection_slot):
+                    _injection_slot._turn_admission_reserved = True
+                    try:
+                        _started = await _start_next_queued_turn(
+                            self.dashboard_state, _injection_slot
                         )
+                    finally:
+                        _injection_slot._turn_admission_reserved = False
+            _task = _injection_slot.task
+            if (
+                _started
+                and _task is not None
+                and not any(item.get("id") == _queue_id for item in _injection_slot._queue)
+            ):
+                # A completion drains alone, so once its entry has left the
+                # queue the turn just started is this completion's.
 
-            _task.add_done_callback(_on_inject_done)
-            if _owes_delivery:
-                # Settle the owed tombstones only once the model has
-                # consumed this turn's prompt — the drain's own
-                # settlement path, reused verbatim. If the transfer
-                # above fell back (stubbed slot), the ledger holds
-                # no debt and the claim inside is an empty no-op.
-                _arm_queued_delivery_settlement(
-                    self.dashboard_state,
-                    _injection_slot,
-                    _task,
-                    [announce],
-                    _consumed,
-                )
+                def _on_inject_done(t: asyncio.Task) -> None:  # type: ignore[type-arg]
+                    if not t.cancelled() and t.exception():
+                        logger.error("Subagent injection _run_chat failed: %s", t.exception())
+                        if self.subagent_mgr:
+                            _reason = str(t.exception())
+                            _reason, _ = redact_exfiltration_urls(_reason)
+                            _reason, _ = redact_credentials(_reason)
+                            self.subagent_mgr.notify_injection_failed(
+                                info,
+                                reason=_reason,
+                            )
+
+                _task.add_done_callback(_on_inject_done)
             self.dashboard_state.push_slots_update()
-            logger.info("Subagent %s → _run_chat in %s", info.id, _slot_name)
+            logger.info(
+                "Subagent %s → %s in %s",
+                info.id,
+                "turn started" if _started else "queued",
+                _slot_name,
+            )
         finally:
             _injection_slot._subagent_deliveries_inflight -= 1
     else:

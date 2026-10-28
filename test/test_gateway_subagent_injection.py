@@ -168,7 +168,7 @@ async def test_a_turn_that_fails_while_awaited_frees_the_tab_for_the_completion(
     await done.drain()
 
     assert [s for s, _text, _kw in done.chats] == [slot]
-    assert slot.queued == []
+    assert slot._queue == []
 
 
 @pytest.mark.asyncio
@@ -195,38 +195,105 @@ async def test_a_tab_still_busy_after_the_wait_queues_and_counts_one_turn(
 
 
 @pytest.mark.asyncio
-async def test_the_tab_turn_runs_as_the_sub_agent_and_owes_its_delivery(done: _Done) -> None:
+async def test_an_idle_tab_queues_the_completion_and_drains_it_at_once(done: _Done) -> None:
+    """The idle tab takes the queue drain's admission path, not a turn of its own."""
     slot = done.tab("main")
     info = make_info()
 
     await done.done(info)
     await done.drain()
 
-    ((turn_slot, text, kwargs),) = done.chats
+    ((text, kind, meta),) = slot.queued
+    assert kind == gw_mod.SUBAGENT_COMPLETION_KIND
+    assert sorted(meta) == [gw_mod.SUBAGENT_COMPLETION_META_KEY]
+    assert text.startswith(gw_mod.SUBAGENT_COMPLETION_PREFIX)
+    # The drain settles the delivery once the announce is consumed.
+    assert [content for content, _ids in slot.owed] == [text]
+    assert info._delivery_queued is True
+    assert done.drains == [slot]
+    assert [(s, t) for s, t, _kw in done.chats] == [(slot, text)]
     assert done.turn_is_slot_task == [True]
-    assert len(done.state._background_tasks.added) == 1
-    assert done.state._background_tasks == set()
-    assert turn_slot is slot and text.startswith(gw_mod.SUBAGENT_COMPLETION_PREFIX)
-    assert kwargs["_directive_user_origin"] is False
-    assert kwargs["_turn_actor"] == "subagent"
-    assert callable(kwargs["_on_consumed"])
+    assert slot._queue == [] and slot.task is None
+    assert slot._turn_admission_reserved is False
     assert slot._synthesis_completion_turns == 1
-    assert slot.task is None
-    gw_mod._arm_queued_delivery_settlement.assert_called_once()
-    assert gw_mod._arm_queued_delivery_settlement.call_args.args[3] == [text]
+    assert slot._subagent_deliveries_inflight == 0
+    gw_mod._arm_queued_delivery_settlement.assert_not_called()
     done.state.push_slots_update.assert_called_once_with()
 
 
 @pytest.mark.asyncio
 async def test_a_failed_solo_run_owes_nothing_to_the_tab_turn(done: _Done) -> None:
-    done.tab("main")
+    slot = done.tab("main")
 
     await done.done(make_info(error="boom"))
     await done.drain()
 
-    ((_slot, _text, kwargs),) = done.chats
-    assert "_on_consumed" not in kwargs
-    gw_mod._arm_queued_delivery_settlement.assert_not_called()
+    assert len(done.chats) == 1
+    assert [ids for _content, ids in slot.owed] == [[]]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("_stop_state", "soft_pending"),
+        ("_stopping", True),
+        ("is_closing", True),
+        ("_last_turn_auth_required", True),
+        ("_turn_admission_reserved", True),
+    ],
+)
+async def test_an_idle_tab_that_cannot_admit_a_turn_keeps_the_completion_queued(
+    done: _Done, field: str, value: Any
+) -> None:
+    """A Stop being resolved, a closing tab, a sign-in hold or a send's
+    reservation: the completion waits as a card for the next drain."""
+    slot = done.tab("main")
+    setattr(slot, field, value)
+    info = make_info()
+
+    await done.done(info)
+    await done.drain()
+
+    assert done.chats == [] and done.drains == []
+    assert [entry["kind"] for entry in slot._queue] == [gw_mod.SUBAGENT_COMPLETION_KIND]
+    assert [content for content, _ids in slot.owed] == [slot._queue[0]["content"]]
+    assert info._delivery_queued is True
+    assert slot._subagent_deliveries_inflight == 0
+    done.state.push_slots_update.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_a_completion_the_drain_refuses_stays_queued(done: _Done) -> None:
+    """Shutdown and memory preparation are refused inside the drain."""
+    slot = done.tab("main")
+    done.drain_refuses = True
+    info = make_info()
+
+    await done.done(info)
+    await done.drain()
+
+    assert done.drains == [slot] and done.chats == []
+    assert [entry["kind"] for entry in slot._queue] == [gw_mod.SUBAGENT_COMPLETION_KIND]
+    assert slot._turn_admission_reserved is False
+    done.mgr.notify_injection_failed.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_an_entry_already_queued_runs_before_the_completion(done: _Done) -> None:
+    """A message parked in the queue keeps its place; the completion waits
+    behind it, and that turn's failure is not reported as this completion's."""
+    slot = done.tab("main")
+    slot.queue_append("parked earlier")
+    done.chat_error = RuntimeError("the parked turn failed")
+    info = make_info()
+
+    await done.done(info)
+    await done.drain()
+
+    assert [t for _s, t, _kw in done.chats] == ["parked earlier"]
+    assert [entry["kind"] for entry in slot._queue] == [gw_mod.SUBAGENT_COMPLETION_KIND]
+    done.mgr.notify_injection_failed.assert_not_called()
 
 
 @pytest.mark.asyncio
