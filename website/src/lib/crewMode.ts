@@ -112,15 +112,13 @@ export function memoryModeAllowsCrewMode(memoryMode: string | undefined): boolea
   return (memoryMode ?? 'persistent') === 'persistent'
 }
 
-/** Rows of a normal chat's agent picker. The rule it will carry: every conductor
- *  left out, since the composer's Crew Mode switch is the way onto one; crewmates
- *  kept whatever their name. On this part the rule is INERT -- every row passes
- *  through -- because the switch is not here yet and the picker is still the one
- *  way onto a conductor template. The part that adds the switch turns the rule
- *  on here, in this one function; the picker, the Split View pane picker and the
- *  keyboard cycle (`agentCycleTarget`) already read through it. */
+/** Rows of a normal chat's agent picker: every conductor left out, since the
+ *  composer's Crew Mode switch (this part) is the way onto one; crewmates kept
+ *  whatever their name. The picker, the Split View pane picker and the keyboard
+ *  cycle (`agentCycleTarget`) all read through this one function. On a gateway
+ *  without Crew Mode no template is a conductor, so every row passes. */
 export function withoutConductors<T extends { name: string; selection_kind?: string }>(choices: T[]): T[] {
-  return choices
+  return choices.filter(c => c.selection_kind === 'member' || !isConductorAgent(c.name))
 }
 
 /** Every surface that can show a session's pending tool approval. Listed so one

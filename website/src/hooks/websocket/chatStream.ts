@@ -8,6 +8,7 @@ import { sseChatMessage, appendSlotMessage, setSlotStatusDetail, sseToolActivity
 import { dispatchMcNotification, APPROVAL_KIND, shouldChimeOnPermissionRow } from '../notificationEvent'
 import { chatMessageMarksUnread, isMemberThreadSlot, memberThreadRowMarksUnread, noteMemberThreadRow, unreadWatermarkTs } from '../unreadOnAttention'
 import { isSlotMuted } from '../sessionMute'
+import { isCrewWorkerSlot } from './approvals'
 import { isTerminalErrorRow, noteTurnErrorRow, takeTurnErrored } from '../turnError'
 import { noteUnsavedRowTs } from '../../lib/slotReadRelay'
 import { emitThemeSound } from '../themeSound'
@@ -56,7 +57,11 @@ export function useChatStream({ dispatch, buffers, voice, reconnectingRef }: Cha
       // the append — and a reconnect replay stay silent. A Slack post
       // that fails after the row went out retires it via
       // `approval_resolved`; that arrival chime is the accepted residual.
-      if (data.role === 'permission' && shouldChimeOnPermissionRow({ meta: data.meta, reconnecting: reconnectingRef.current })) {
+      // A Crew Mode worker's prompt is decided on its conductor's approval card,
+      // so its row raises neither the chime nor the banner (the row itself stays
+      // in the worker's transcript); same rule as `onApprovalFrame` in approvals.ts.
+      if (data.role === 'permission' && !isCrewWorkerSlot(String(data.slot ?? ''))
+        && shouldChimeOnPermissionRow({ meta: data.meta, reconnecting: reconnectingRef.current })) {
         dispatchMcNotification(APPROVAL_KIND)
         // The same row is the OS toast for a user away from the window: no
         // feed note exists for it, so `useNativeNotification` never sees it.

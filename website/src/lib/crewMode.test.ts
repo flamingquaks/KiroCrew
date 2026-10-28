@@ -29,9 +29,9 @@ describe('crewMode', () => {
     expect(runsConductor('kirocrew-conductor', 'member')).toBe(false)
   })
 
-  it('keeps conductor templates in a normal chat picker on this part: the picker is still the way onto one', () => {
-    // The drop lands with the composer's Crew Mode switch; until then the rule
-    // passes every row, crewmates and conductor templates alike.
+  it('drops conductor templates from a normal chat picker and keeps crewmates, whatever their name', () => {
+    // The composer's Crew Mode switch is the way onto a conductor, so the picker
+    // lists none of the catalog's conductor set; a crewmate row stays.
     setCrewModeCatalog('kirocrew-conductor', ['kirocrew-conductor', 'kirocrew-pipeline-conductor'])
     const rows = [
       { name: 'kirocrew', selection_kind: 'template' },
@@ -39,7 +39,10 @@ describe('crewMode', () => {
       { name: 'kirocrew-pipeline-conductor', selection_kind: 'template' },
       { name: 'kirocrew-conductor', selection_kind: 'member' },
     ]
-    expect(withoutConductors(rows)).toEqual(rows)
+    expect(withoutConductors(rows)).toEqual([
+      { name: 'kirocrew', selection_kind: 'template' },
+      { name: 'kirocrew-conductor', selection_kind: 'member' },
+    ])
   })
 
   it('keeps workers out of the person list and can show only roots', () => {
@@ -68,7 +71,7 @@ describe('crewMode', () => {
     expect(memoryModeAllowsCrewMode('temporary')).toBe(false)
   })
 
-  it('cycles a normal chat over the same list the picker shows, conductors included on this part', () => {
+  it('cycles a normal chat over the same list the picker shows, conductors left out', () => {
     setCrewModeCatalog('kirocrew-conductor', ['kirocrew-conductor', 'kirocrew-team-lead'])
     const agents = [
       { name: 'kirocrew', selection_kind: 'template' },
@@ -76,10 +79,11 @@ describe('crewMode', () => {
       { name: 'research', selection_kind: 'template' },
       { name: 'kirocrew-team-lead', selection_kind: 'template' },
     ]
-    // The cycle reads `withoutConductors`, inert until the switch part lands.
-    expect(agentCycleTarget(agents, 'kirocrew', 'template', 1)).toBe('kirocrew-conductor')
-    expect(agentCycleTarget(agents, 'research', 'template', 1)).toBe('kirocrew-team-lead')
-    expect(agentCycleTarget(agents, 'kirocrew', 'template', -1)).toBe('kirocrew-team-lead')
+    // The cycle reads `withoutConductors`: the chord never lands on a conductor,
+    // since the composer's Crew Mode switch is the way onto one.
+    expect(agentCycleTarget(agents, 'kirocrew', 'template', 1)).toBe('research')
+    expect(agentCycleTarget(agents, 'research', 'template', 1)).toBe('kirocrew')
+    expect(agentCycleTarget(agents, 'kirocrew', 'template', -1)).toBe('research')
     // A chat already on a conductor has no picker to mirror (the server refuses
     // to move a Crew Mode root), so the chord does nothing there.
     expect(agentCycleTarget(agents, 'kirocrew-conductor', 'template', 1)).toBeNull()

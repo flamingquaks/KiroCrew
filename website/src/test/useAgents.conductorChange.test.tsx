@@ -39,15 +39,15 @@ describe('useAgents follows a conductor change with the roster unchanged', () =>
   })
   afterEach(() => resetCrewModeCatalog())
 
-  it('keeps every template, the conductor too, on this part, and re-reads the picker when only the conductor moves', async () => {
-    // `withoutConductors` is inert until the composer's Crew Mode switch lands,
-    // so the picker keeps the conductor templates: they are still the way onto
-    // one. The memo still re-runs on a conductor change (`crewCatalogKey`), which
-    // is what makes the switch part's drop take effect without a reload.
+  it('drops the conductor from the picker and re-reads it when only the conductor moves', async () => {
+    // `withoutConductors` leaves the catalog's conductor set out of the picker:
+    // the composer's Crew Mode switch is the way onto one. The memo re-runs on a
+    // conductor change (`crewCatalogKey`), so the drop follows the catalog
+    // without a reload: the old conductor comes back, the new one leaves.
     agentsApi.mockResolvedValue({ agents: TEMPLATES, default_agent: 'kirocrew', crew_mode_agent: 'lead-a', conductor_agents: ['lead-a'] } as never)
     let tick = 0
     const { result, rerender } = renderHookWithProviders(() => useAgents(tick))
-    await waitFor(() => expect(names(result.current.choices)).toEqual(['kirocrew', 'lead-a', 'lead-b']))
+    await waitFor(() => expect(names(result.current.choices)).toEqual(['kirocrew', 'lead-b']))
     const before = result.current.choices
 
     // The same three templates, in the same order; only the conductor moved.
@@ -56,7 +56,9 @@ describe('useAgents follows a conductor change with the roster unchanged', () =>
     rerender()
     await waitFor(() => expect(agentsApi).toHaveBeenCalledTimes(2))
     await waitFor(() => expect(result.current.choices).not.toBe(before))
-    expect(names(result.current.choices)).toEqual(['kirocrew', 'lead-a', 'lead-b'])
-    expect(names(result.current.displayChoices)).toEqual(['kirocrew', 'lead-a', 'lead-b'])
+    expect(names(result.current.choices)).toEqual(['kirocrew', 'lead-a'])
+    expect(names(result.current.displayChoices)).toEqual(['kirocrew', 'lead-a'])
+    // The unfiltered roster still lists every template for the name-only readers.
+    expect(names(result.current.agents)).toEqual(['kirocrew', 'lead-a', 'lead-b'])
   })
 })

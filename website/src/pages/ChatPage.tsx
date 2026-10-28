@@ -17,6 +17,8 @@ import { useChatPageEnvironment, usePageFlags } from './chat/page/pageEnvironmen
 import { useActiveSlotState } from './chat/page/activeSlotState'
 import { useComposerDraftState, ComposerDraftSync, useComposerIntakeRefs, useMainComposerHandoff, useComposerVoiceHost } from './chat/page/composerHost'
 import { useModelPickerModels, useNewSessionPicks, useSessionChoices } from './chat/page/sessionPicks'
+import { useCrewModeSwitch } from './chat/page/crewModeSwitch'
+import { runsCrewMode } from '../lib/crewMode'
 import { useSteerDelivery, useRefusedPress, useRegenerate } from './chat/page/turnActions'
 import { useTranscriptScrollRefs, useTranscriptPaging } from './chat/page/transcriptPaging'
 import { useRunInTerminalConfig, useAppPanelReveal } from './chat/page/panelTabs'
@@ -653,6 +655,19 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
   })
 
   const currentSlot = slots.find(s => s.key === activeSlot)
+  // Unknown counts as sent: while the transcript is still loading the mark does not
+  // offer to turn Crew Mode off, since the server refuses that once a message was
+  // sent (`crew_mode_locked`) and the loaded rows are the only way to know.
+  const hasUserMessage = slotLoading || messages.some(m => m.role === 'user')
+  const { crewModeEligible, crewModeOn, crewModeChosen, crewModeLeaving, turnOnCrewMode, turnOffCrewMode, openTaskBoard } = useCrewModeSwitch({ currentSlot, defaultAgent, hasUserMessage, switchAgent, openView: tabsCtl.openView })
+  // From the chip press to the first message the transcript shows the Crew Mode
+  // welcome without a break: a slot reload in that window (the switch's own reads,
+  // or a re-fetch of the same empty chat, `slotLoading`) and a slot record that has
+  // not caught up with the switch yet (`crewModeOn` still false) would otherwise
+  // swap it for the loading skeleton or the plain welcome and back, and play its
+  // entrance twice. Sending, a running reply or a question card still end it.
+  const crewWelcomeHeld = crewModeChosen && messages.length === 0 && !slotRunning && !sendingRef.current && !pendingQuestion
+  const transcriptWelcome = isWelcomeState || crewWelcomeHeld
   // App-contributed session controls and the folder context they are handed.
   const sessionControlState = useComposerSessionControls({ activeSlot, currentSlot, queryClient })
   const {
@@ -1053,7 +1068,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
               embedded={embedded} popout={popout} activeSlot={activeSlot} appToolCallIds={appToolCallIds} titleInTopbar={titleInTopbar} activityOpen={activityOpen}
               completedTurnCount={completedTurnCount} cursorIsForActiveSlot={cursorIsForActiveSlot} kiroCrewVersion={kiroCrewVersion} loadingOlder={loadingOlder} olderFailed={olderFailed}
               setTurnDisclosureFor={setTurnDisclosureFor} slotHasMore={slotHasMore} slotLoading={slotLoading} slotRunning={slotRunning} slotState={slotState} environmentStart={environmentStart} slotStopping={slotStopping}
-              slotSwitchTarget={slotSwitchTarget} turnDisclosure={turnDisclosure} turnRowMayBeLive={turnRowMayBeLive} setInput={setInput} isWelcomeState={isWelcomeState} chatConfig={chatConfig}
+              slotSwitchTarget={slotSwitchTarget} turnDisclosure={turnDisclosure} turnRowMayBeLive={turnRowMayBeLive} setInput={setInput} isWelcomeState={transcriptWelcome} crewModeOn={crewModeOn || crewWelcomeHeld} openTaskBoard={openTaskBoard} chatConfig={chatConfig}
               scrollerRef={scrollerRef} bindScroller={bindScroller} handleSurveyLayoutChange={handleSurveyLayoutChange} onScrollPin={onScrollPin} pinned={pinned} approve={approve}
               dismissApproval={dismissApproval} currentSlot={currentSlot} regenerating={regenerating} sendUnconfirmed={sendUnconfirmed} dockH={dockH} lastRole={lastRole} streamTick={streamTick}
               toggleAct={toggleAct} renderedDisplayItems={renderedDisplayItems} stableMsgKey={stableMsgKey} virtualKey={virtualKey} handleLoadEarlier={handleLoadEarlier}
@@ -1094,7 +1109,19 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
               handleCancelQueued={handleCancelQueued} handleEditQueued={handleEditQueued} handleInterruptQueued={handleInterruptQueued} handleReorderQueued={handleReorderQueued}
               keepQuestionAnswer={keepQuestionAnswer} queuedMessages={queuedMessages} queuePendingIds={queuePendingIds} steer={steer} stopTurn={stopTurn} systemDeliveryCount={systemDeliveryCount}
               handleEditLastRequest={handleEditLastRequest} composerOptimizing={composerOptimizing} handleOptimizingChange={handleOptimizingChange} memorySwitching={memorySwitching}
-              showComposerMemoryChip={showComposerMemoryChip} switchMemoryMode={switchMemoryMode} composerAbove={composerAbove} composerSessionControls={composerSessionControls}
+              // Crew Mode is chosen on the welcome state: while it is on neither the
+              // memory-mode chip nor the Crew Mode chip is offered. Until the first
+              // message the composer mark turns it off and both come back; after
+              // that the chat stays on the conductor.
+              showComposerMemoryChip={showComposerMemoryChip && !crewModeChosen} switchMemoryMode={switchMemoryMode} composerAbove={composerAbove} composerSessionControls={composerSessionControls}
+              // Beside the memory chip on the welcome state only, and not while the chat
+              // is still loading: drawn alone first, the Crew Mode chip would slide
+              // across the memory chip arriving beside it.
+              crewModeOffered={crewModeEligible && !crewModeChosen && !slotLoading && showComposerMemoryChip} turnOnCrewMode={turnOnCrewMode}
+              agentPickerHidden={crewModeChosen || (!crewModeLeaving && runsCrewMode(currentSlot?.agent, currentSlot?.agent_kind, currentSlot?.crew_mode_agent))}
+              turnOffCrewMode={turnOffCrewMode}
+              steerWorker={currentSlot?.crew_root ? (currentSlot.title || i18nT('commandCenter.worker_untitled')) : undefined}
+              steerWorkerRoot={currentSlot?.crew_root || ''}
             />
           </div>
           </SearchHighlightContext.Provider>
