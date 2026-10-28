@@ -371,8 +371,15 @@ def _register_mcp_routes(app: web.Application) -> None:
         ("GET", "/api/members/import/{sha256}/files", "api_members_import_files"),
     ):
         app.router.add_route(_method, _path, _deferred("change_cards", _name))
+    # ``request_server`` (kirocrew-core): any template session asks for an MCP
+    # server; MCP-only under the same strict "/api/cards/agent" prefix.
+    for _method, _path, _name in (
+        ("POST", "/api/cards/agent/request-server", "api_cards_agent_request_server"),
+    ):
+        app.router.add_route(_method, _path, _deferred("template_server_request", _name))
     app.router.add_get(
-        "/api/chat/slots/{slot}/dashboard", _deferred("member_dashboard", "api_session_dashboard")
+        "/api/chat/slots/{slot}/dashboard",
+        _deferred("member_dashboard", "api_session_dashboard"),
     )
     app.router.add_get("/api/crons", handlers.api_crons)
     app.router.add_post("/api/crons", handlers.api_crons_create)

@@ -2155,6 +2155,8 @@ names one REGISTERED kind (`change_card_catalog.KINDS`: `setting.change`,
 `schedule.create`/`.update`, `crewmate.create`/`.update`/`.capabilities`,
 `template.update`, `mcp.install`/`.add_custom`/`.toggle`, `connection.connect`,
 `secret.save`, `trust.app`, `denied_command`, `folder.steering`); trust-root files have no kind.
+`template.mcp_server` is not one of them: its server entry is the gateway's own, so
+only `request_server` raises it (see *Asking for an MCP server mid-chat*).
 `setting.change` takes a Settings-registry `setting_id` (found with
 `find_setting(query)`, which returns up to ten matches with `writable`,
 the current value and the allowed values, never a credential value) or a raw
@@ -2474,6 +2476,8 @@ answers `tools/list` from):
     climbs process ancestors, so a sub-agent would resolve to its parent and
     deliver into the parent's chat window. An unresolvable identity refuses the
     call rather than guessing.
+- **Capability requests:** `request_server` (any template session asks the user
+  for an MCP server it lacks; see *Asking for an MCP server mid-chat*)
 - **Session-bound directives** (`session_directive.DIRECTIVE_TOOLS`):
   `nothing_to_do`, `suggest_followup`, `monitor_start`, `monitor_watch`,
   `monitor_update`, `monitor_stop`, `autonudge_stop`, `set_project`,
@@ -2604,6 +2608,64 @@ A pooled backend's `initialize` result is cached and replayed to every later stu
 respawned backend's result replaces the cache. Pinned by
 `test_pooled_stubs_get_the_backends_instructions_after_a_respawn_too` and
 `test_mcp_instructions.py`.
+
+### Asking for an MCP server mid-chat (`request_server`)
+
+A session on any agent template (the default `kirocrew`, a custom or third-party
+agent, the worker, a conductor) asks for a server it lacks with `request_server`
+on `kirocrew-core`, the one server every session carries
+(`mcp_tools/server_requests.py`). The user approves one `template.mcp_server`
+change card, and the server is written to the template's additions record
+(`template_mcp_additions`), never into the spec file. A crewmate keeps
+`request_capabilities`, which edits its own file.
+
+- **The agent names a server, never a launch line.** The tool sends
+  `{server?, source, registry_id?, reason?}` and nothing else; the route answers
+  `400 invalid_body` to any other field (a `command`, `url`, `entry`, `template`
+  or session). The gateway builds the entry
+  (`member_capability_catalog.resolve_server`, shared with
+  `request_capabilities`): `source: "gateway"` copies a server this gateway runs
+  and has switched on, `source: "registry"` takes the official registry's
+  install plan. A gateway entry that carries env, headers or credential
+  arguments is refused `carries_settings`, because a card's params reach the
+  agent that asked; such a server is added on the MCP page, where secrets come
+  from the existing store. The entry then passes
+  `template_mcp_additions.validate_entry`, so no `autoApprove`, `allowedTools`
+  or other trust key can ride on it. `propose_change` cannot raise the kind at
+  all (`change_card_catalog.GATEWAY_RESOLVED_KINDS`, `403 use_request_server`),
+  and `list_change_kinds` leaves it out.
+- **The caller and its template come from the attested session.**
+  `POST /api/cards/agent/request-server` sits under the strict `/api/cards/agent`
+  prefix and resolves the caller with `handlers.guide._resolve_agent_caller`;
+  `cards.request_server` is a user-turn operation. A subagent, a schedule or
+  workflow slot, a messaging-channel turn, and any turn the user did not send
+  (a patrol or loop wake, a `session_send`, a subagent's result) are refused
+  with a reason that says what to do instead (`subagent_caller`,
+  `unattended_caller`, `channel_caller`, `not_user_turn`). Unlike the crewmate
+  route there is no own-thread exemption: a card nobody sees is never raised.
+  The template is the caller's execution record's `template_id`; an alias reads
+  its target's record (`template_mcp_reach.record_template`).
+- **A harness that cannot apply it is refused with the record's reason.**
+  `template_mcp_additions.addition_support(template, backend)` answers for the
+  caller's backend; a template Crew does not own on a harness that loads its
+  agent off disk (kiro-cli) is refused `409 unsupported` with
+  `UNSUPPORTED_REASON`.
+- **The card lists the whole reach and grants nothing.** Its rows name every
+  template the addition reaches (`template_mcp_reach.addition_reach`: an
+  addition to `kirocrew` also reaches `kirocrew-worker`), every open session on
+  those templates, and the crew members built from them; whether running
+  sessions pick it up at their next turn (the live gate,
+  `mcp_hot_reload.live_sessions_apply_mcp_live`) or restart; and that each tool
+  still asks before running. A registry server reads `code_exec`.
+- **Only the owner applies it, and its Undo removes only its own record.** The
+  apply step is `POST /api/agents/detail/{name}/mcp-additions` and the Undo is
+  `DELETE /api/agents/detail/{name}/mcp-additions/{server}?card_id=<card>`, both
+  card-hooked routes that refuse any internal caller `403 owner_only`; the POST
+  also refuses a request with no card (`403 card_required`), so the only entry
+  ever recorded is one a card showed. The Undo calls `remove_addition` with the
+  card id, so a later approval of the same server on another card survives it.
+  Each write rebuilds the agent specs and then applies live or resets sessions,
+  as an MCP page change does.
 
 ### A `kirocrew-core` tool has two halves
 

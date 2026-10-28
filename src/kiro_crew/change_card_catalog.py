@@ -64,6 +64,7 @@ from kiro_crew.change_card_catalog_kinds import (
     KIND_SCHEDULE_CREATE,
     KIND_SECRET_SAVE,
     KIND_SETTING_CHANGE,
+    KIND_TEMPLATE_MCP_SERVER,
     KIND_TEMPLATE_UPDATE,
     LIST_OP_ADD,
     LIST_OP_REMOVE,
@@ -98,6 +99,7 @@ from kiro_crew.change_card_catalog_plans import (
     setting_write_step,
     step,
     string_items,
+    template_additions_path,
 )
 from kiro_crew.config.sections import MEMBER_APPROVAL_MODE_UNSET_EFFECTIVE
 
@@ -149,6 +151,9 @@ def extract_evidence(
         return pick("preview_token")
     if kind == KIND_CREWMATE_CAPABILITIES:
         return pick("revision")
+    if kind == KIND_TEMPLATE_MCP_SERVER:
+        # The card the addition was recorded under: its Undo removes only that one.
+        return pick("card_id")
     if kind == KIND_MCP_INSTALL:
         return pick("name")
     if kind == KIND_MCP_ADD_CUSTOM:
@@ -368,6 +373,14 @@ def _build_undo(
                 value = [] if k != "model" else ""
             old[k] = value
         return [step("PATCH", f"/api/agents/detail/{_q(p['template'])}", old)], None
+    if kind == KIND_TEMPLATE_MCP_SERVER:
+        # Bound to this card's own record (``remove_addition(card_id=...)``), so a
+        # later approval of the same server on another card is never taken back.
+        card_id = ev(0).get("card_id")
+        if not isinstance(card_id, str) or not card_id:
+            return None, "identity_unknown"
+        path = template_additions_path(p["template"], p["server"])
+        return [step("DELETE", path + "?" + urllib.parse.urlencode({"card_id": card_id}))], None
     if kind == KIND_MCP_TOGGLE:
         return [_toggle_step(p, bool(before.get("enabled")))], None
     if kind == KIND_FOLDER_STEERING:
@@ -590,6 +603,8 @@ HOOKED_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("POST", "/api/agents/{name}/capabilities/preview"),
         ("PUT", "/api/agents/{name}/capabilities"),
         ("PATCH", "/api/agents/detail/{name}"),
+        ("POST", "/api/agents/detail/{name}/mcp-additions"),
+        ("DELETE", "/api/agents/detail/{name}/mcp-additions/{server}"),
         ("PUT", "/api/members/{slug}/goals/long-term"),
         ("PUT", "/api/members/{slug}/goals/key-results"),
         ("PUT", "/api/members/{slug}/goals/schedules"),
@@ -623,6 +638,10 @@ HOOKED_ROUTES: frozenset[tuple[str, str]] = frozenset(
 #: rules are the owner's private boundary and the files are code, so neither
 #: is described in Global memory.
 MEMORY_ROUTES: frozenset[tuple[str, str]] = HOOKED_ROUTES - {
+    # A launch line is code, never described in Global memory; the card itself
+    # is the record.
+    ("POST", "/api/agents/detail/{name}/mcp-additions"),
+    ("DELETE", "/api/agents/detail/{name}/mcp-additions/{server}"),
     ("POST", "/api/agents/{name}/capabilities/preview"),
     ("GET", "/api/connections/mint"),
     ("PATCH", "/api/chat/folders/{id}"),
@@ -679,6 +698,7 @@ if TYPE_CHECKING:  # every owner-defined name in _EXPORTS, for type checkers and
         CREWMATE_FORMAT_VERSIONS,
         DEFAULT_CREWMATE_TEMPLATE,
         FOLDER_STEERING_DIR_MAX,
+        GATEWAY_RESOLVED_KINDS,
         KIND_SCHEDULE_UPDATE,
         KIND_TRUST_APP,
         KINDS,
@@ -690,6 +710,7 @@ if TYPE_CHECKING:  # every owner-defined name in _EXPORTS, for type checkers and
         RISK_TIGHTEN,
         RISK_WIDEN,
         SELF_ONLY_KINDS,
+        TEMPLATE_SERVER_SOURCES,
         CardCatalogError,
         KindDef,
         _check_mcp_spec_shapes,
@@ -743,6 +764,7 @@ if TYPE_CHECKING:  # every owner-defined name in _EXPORTS, for type checkers and
         _setting_risk_key,
         _step_fill,
         _step_path_fill,
+        _template_server_preview,
         _user_fill,
         _widening_row,
         _with_fills,

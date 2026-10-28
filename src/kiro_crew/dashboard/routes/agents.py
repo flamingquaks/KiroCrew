@@ -10,11 +10,26 @@ swallow it, so neither the lines within this function nor the order in which
 
 from __future__ import annotations
 
+from typing import Any
+
 from aiohttp import web
 
 from kiro_crew.dashboard import handlers
 from kiro_crew.dashboard.handlers import agent_templates, member_export
 from kiro_crew.dashboard.handlers.agent_catalog import api_agent_catalog
+
+
+def _additions_route(handler_name: str) -> Any:
+    """A route bound to :mod:`handlers.template_server_request` without importing it at boot."""
+
+    async def _route(request: web.Request) -> web.StreamResponse:
+        from kiro_crew.dashboard.handlers import template_server_request
+
+        handler = getattr(template_server_request, handler_name)
+        return await handler(request)
+
+    _route.__name__ = handler_name
+    return _route
 
 
 def register(app: web.Application) -> None:
@@ -39,6 +54,16 @@ def register(app: web.Application) -> None:
     app.router.add_post("/api/agents/detail/{name}/fork", handlers.api_agent_fork)
     app.router.add_post("/api/agents/detail/{name}/publish", handlers.api_agent_publish)
     app.router.add_post("/api/agents/detail/{name}/reset", handlers.api_agent_reset)
+    # A ``template.mcp_server`` card's step and its Undo: owner-only, card-hooked.
+    # The handler module loads on first use, not at boot.
+    app.router.add_post(
+        "/api/agents/detail/{name}/mcp-additions",
+        _additions_route("api_template_mcp_addition_add"),
+    )
+    app.router.add_delete(
+        "/api/agents/detail/{name}/mcp-additions/{server}",
+        _additions_route("api_template_mcp_addition_remove"),
+    )
     from kiro_crew.dashboard.handlers.agent_capabilities import (
         api_member_capabilities,
         api_member_capabilities_detach,

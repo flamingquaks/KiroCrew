@@ -304,6 +304,7 @@ REFLEXIVE_TOOL_MODULES: frozenset[str] = frozenset(
         "mcp_tools/ledger.py",
         "mcp_tools/logs.py",
         "mcp_tools/messaging.py",
+        "mcp_tools/server_requests.py",
         "mcp_tools/sessions.py",
         "mcp_tools/skills.py",
         # Not a tool module: the tool table's production caller, which every
