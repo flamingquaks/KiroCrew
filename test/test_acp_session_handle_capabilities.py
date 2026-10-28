@@ -282,7 +282,7 @@ async def test_kas_still_sends_exactly_one_config_write():
     dashboard would report a switch KAS never made.
 
     The id is in KAS's own spelling. A claude_code spelling is changed to it
-    before the write (#24876, covered in test_kas_model_verb.py).
+    before the write (covered in test_kas_model_verb.py).
     """
     assert ACP_BACKEND_KAS not in ACP_BACKENDS_MODEL_VIA_CONFIG_OPTION
     handle = _make_handle(ACP_BACKEND_KAS)

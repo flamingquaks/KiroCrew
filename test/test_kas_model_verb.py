@@ -111,7 +111,7 @@ class TestKasModelSpelling:
     The claude_code id for Opus 5.5 is ``global.anthropic.claude-opus-5-5[1m]``;
     KAS takes ``claude-opus-5.5``. KAS accepts the claude_code id on its
     ``model`` option and then fails the turn, so the id has to be changed
-    before it is sent (#24876).
+    before it is sent.
     """
 
     _BEDROCK = "global.anthropic.claude-opus-5-5[1m]"
