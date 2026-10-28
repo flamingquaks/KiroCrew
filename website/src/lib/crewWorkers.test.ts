@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CREW_GROUP_LABEL_KEY, CREW_GROUP_ORDER, CREW_GROUP_TONE, crewSubDispatcher, crewWorkerGroup, crewWorkerGroupOfRow, groupCrewWorkers, orderUnderDispatcher, summarizeCrewWorkers } from './crewWorkers'
+import { CREW_GROUP_LABEL_KEY, CREW_GROUP_ORDER, CREW_GROUP_TONE, crewSubDispatcher, crewWorkerGroup, crewWorkerGroupOfRow, groupCrewWorkers, orderUnderDispatcher, summarizeCrewWorkers , liveCrewWorkers, mergeCrewWorkers } from './crewWorkers'
 import type { CrewWorker } from '../types'
 
 describe('crewWorkers', () => {
@@ -34,6 +34,31 @@ describe('crewWorkers', () => {
     [{ messages: 0 }, 'waiting'],
   ] as const)('a live row %o groups as %s', (row, group) => {
     expect(crewWorkerGroupOfRow(row)).toBe(group)
+  })
+
+  describe('live rows: the open workers the slot store names on its own', () => {
+    const slots = [
+      { key: 'root', title: 'Root', crew_mode_root: true },
+      { key: 'w-run', title: 'Runner', agent: 'kirocrew-worker', crew_root: 'root', running: true, created_by: 'root', last_turn_ts: '2026-10-28T10:00:00Z' },
+      { key: 'w-ask', title: '', crew_root: 'root', pending_approval: true, created_by: 'root' },
+      { key: 'w-sub', title: 'Grandchild', crew_root: 'root', created_by: 'w-run' },
+      { key: 'other', title: 'Another root\'s worker', crew_root: 'elsewhere' },
+      { key: 'peer', title: 'A peer\'s worker', crew_root: 'root', peer_id: 'inst-a' },
+    ]
+    it('shapes a root\'s own open workers as list rows: state to status and group, lineage kept', () => {
+      const rows = liveCrewWorkers(slots, 'root')
+      expect(rows.map(r => r.key)).toEqual(['w-run', 'w-ask', 'w-sub'])
+      expect(rows[0]).toMatchObject({ status: 'working', group: 'working', agent: 'kirocrew-worker', last_activity: '2026-10-28T10:00:00Z', created_by: 'root', ledger_item: '' })
+      expect(rows[1]).toMatchObject({ status: 'needs_approval', group: 'approval', title: '' })
+      expect(rows[2]).toMatchObject({ status: 'idle', group: 'waiting', dispatched_by: 'w-run' })
+      expect(liveCrewWorkers(slots, '')).toEqual([])
+    })
+    it('merges under the route\'s rows, which win where both name a key', () => {
+      const listed = [{ key: 'w-run', title: 'Runner', agent: 'kirocrew-worker', status: 'idle', group: 'done', last_activity: '', ledger_item: 'it_1', created_by: 'root' }] as const
+      const merged = mergeCrewWorkers([...listed], liveCrewWorkers(slots, 'root'))
+      expect(merged.map(r => [r.key, r.group])).toEqual([['w-run', 'done'], ['w-ask', 'approval'], ['w-sub', 'waiting']])
+      expect(mergeCrewWorkers(undefined, liveCrewWorkers(slots, 'root')).map(r => r.key)).toEqual(['w-run', 'w-ask', 'w-sub'])
+    })
   })
 
   describe('sub-conductors', () => {

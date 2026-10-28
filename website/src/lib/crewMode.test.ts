@@ -42,15 +42,13 @@ describe('crewMode', () => {
     expect(withoutConductors(rows)).toEqual(rows)
   })
 
-  it('passes every row through on this part, and can show only roots', () => {
-    // The rule (a root's workers left out) is inert until the Crew panel part lists
-    // them; what is live now is the roots-only view the filter chip reads.
+  it('keeps workers out of the person list and can show only roots', () => {
     const rows = [
       { key: 'a', crew_mode_root: true },
       { key: 'b', crew_root: 'a' },
       { key: 'c' },
     ]
-    expect(crewModeView(rows).map(r => r.key)).toEqual(['a', 'b', 'c'])
+    expect(crewModeView(rows).map(r => r.key)).toEqual(['a', 'c'])
     expect(crewModeView(rows, true).map(r => r.key)).toEqual(['a'])
   })
 

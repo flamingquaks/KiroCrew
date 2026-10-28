@@ -91,6 +91,9 @@ export interface TimeScale {
   toPct: (ms: number) => number
   /** Whether any stretch was drawn shorter than true. */
   compressed: boolean
+  /** Each stretch drawn shorter than true, as track percentages, so the axis can
+   *  mark where its scale bends. Empty when nothing is compressed. */
+  compressedStretches: { from: number; to: number }[]
 }
 
 /** The longest stretch drawn to true length. */
@@ -129,6 +132,12 @@ export function timelineScale(data: CrewTimeline, window: TimelineWindow): TimeS
     cumulative.push(cumulative[i - 1] + stretchWeight(span))
   }
   const total = cumulative[cumulative.length - 1] || 1
+  const compressedStretches: { from: number; to: number }[] = []
+  for (let i = 1; i < points.length; i += 1) {
+    if (points[i] - points[i - 1] > LINEAR_MS) {
+      compressedStretches.push({ from: (cumulative[i - 1] / total) * 100, to: (cumulative[i] / total) * 100 })
+    }
+  }
   const toPct = (ms: number): number => {
     if (ms <= points[0]) return 0
     if (ms >= points[points.length - 1]) return 100
@@ -143,7 +152,7 @@ export function timelineScale(data: CrewTimeline, window: TimelineWindow): TimeS
     const within = span > 0 ? stretchWeight(ms - points[lo]) / stretchWeight(span) : 0
     return ((cumulative[lo] + within * (cumulative[hi] - cumulative[lo])) / total) * 100
   }
-  return { toPct, compressed }
+  return { toPct, compressed, compressedStretches }
 }
 
 /** A bar's left and width on *scale*; null when its times do not parse. */

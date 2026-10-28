@@ -146,15 +146,13 @@ export function crewApprovalDecidableHere(
   return surface === 'conductor_card'
 }
 
-/** The person's own session list. The rule it will carry: a Crew Mode root's
- *  workers are left out, because the root's Crew panel lists them. On this part
- *  the rule is INERT -- every row passes through -- since nothing yet lists a
- *  root's workers, and a row no list shows would be unreachable. The part that
- *  adds the Crew panel turns the rule on here, in this one function; every
- *  person-facing list already reads through it. `rootsOnly` keeps just the
- *  roots, for the session filter's Crew Mode chip, and is live now. */
+/** The person's own session list: a Crew Mode root's workers are left out, since
+ *  the root's Crew panel (the side panel's Crew tab) lists them; the part before
+ *  this one wired every person-facing list through here with the drop inert, and
+ *  this part, which adds that panel, turns it on. `rootsOnly` keeps just the
+ *  roots, for the session filter's Crew Mode chip. */
 export function crewModeView<T extends { crew_root?: string; crew_mode_root?: boolean }>(rows: T[], rootsOnly = false): T[] {
-  return rootsOnly ? rows.filter(r => !!r.crew_mode_root) : rows
+  return rows.filter(r => (rootsOnly ? !!r.crew_mode_root : !r.crew_root))
 }
 
 /** The agent the keyboard cycle lands on from `current`, `step` places along

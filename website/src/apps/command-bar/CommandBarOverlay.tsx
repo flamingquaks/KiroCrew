@@ -34,6 +34,7 @@ import { PREVIEW_CREW } from '../../utils/previewFlags'
 import { ARTIFACTS_ROW_LIMIT, COPY_KEY, DEBOUNCE_MS, ENTER_KEY, SKELETON_WIDTHS, actionLabel, headerOf, rootRowCopyable, type Scope } from './commandBarOverlayModel'
 import { useCommandBarOverlayEngines } from './useCommandBarOverlayEngines'
 import { useCommandBarOverlayRootRows } from './CommandBarOverlayRootRows'
+import { crewWaitingApprovals } from '../../pages/chat/command-center/model'
 import { useCommandBarOverlaySlots } from './useCommandBarOverlaySlots'
 import { useCommandBarOverlayActivation } from './useCommandBarOverlayActivation'
 import { commandBarOverlaySlotRenderer } from './CommandBarOverlaySlot'
@@ -196,6 +197,10 @@ export default function CommandBarOverlay({
   // panel, never in the Needs You or Recent sessions rows (the full set stays for
   // the engines, which key navigation and the mates' running state on it).
   const personSlots = useAppSelector(selectPersonSlots)
+  // What those hidden workers owe the person, carried by their root: a worker's
+  // tool approval is counted on its conductor over the FULL slot set, so Needs
+  // You still names it (the fleet page counts the same way, `crewWaitingApprovals`).
+  const crewWaiting = useMemo(() => crewWaitingApprovals(liveSlots), [liveSlots])
   const unreadSlots = useAppSelector(s => s.dashboard.unreadSlots)
   const slotStatusDetail = useAppSelector(s => s.chat.slotStatusDetail ?? {})
   const simplifiedToolNames = useSimplifiedToolNames()
@@ -305,7 +310,7 @@ export default function CommandBarOverlay({
   commandByIdRef.current = commandById
 
   const ranked = useCommandBarOverlayRootRows({
-    liveSlots: personSlots, unreadSlots, slotStatusDetail, simplifiedToolNames, dispatch, navigate, store, cycleTheme,
+    liveSlots: personSlots, crewWaiting, unreadSlots, slotStatusDetail, simplifiedToolNames, dispatch, navigate, store, cycleTheme,
     crewPreview, commandById, apps, settingsGovernance, resolved, scope, query, usage, attentionExpanded,
     setAttentionExpanded,
   })

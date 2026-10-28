@@ -52,6 +52,50 @@ export function crewWorkerGroupOfRow(row: CrewWorkerRowLike): CrewWorkerGroup {
   return 'waiting'
 }
 
+/** The slot-row fields a live worker row is shaped from. */
+export interface LiveCrewWorkerRow extends CrewWorkerRowLike {
+  key: string
+  title?: string
+  agent?: string
+  crew_root?: string
+  created_by?: string
+  last_turn_ts?: string
+  last_ts?: string
+  peer_id?: string
+}
+
+/** A root's OPEN workers from the slot store, shaped as worker-list rows. The
+ *  store already carries what the cards and groups read -- the `crew_root` stamp,
+ *  title, agent and state -- so a root's open workers are listed whether or not
+ *  the gateway serves the worker list (`/crew-workers`): a hidden row is never
+ *  out of reach. That route adds what the store has not: closed workers, the
+ *  ledger item, the one-line summary and the server's own group. A peer's rows
+ *  describe another gateway's crew and are left out. */
+export function liveCrewWorkers(slots: readonly LiveCrewWorkerRow[], root: string): CrewWorker[] {
+  if (!root) return []
+  return slots.filter(s => s.crew_root === root && !s.peer_id).map(s => ({
+    key: s.key,
+    title: s.title || '',
+    agent: s.agent || '',
+    status: s.pending_approval ? 'needs_approval' : s.running ? 'working' : s.needs_input ? 'asking' : 'idle',
+    group: crewWorkerGroupOfRow(s),
+    last_activity: s.last_turn_ts || s.last_ts || '',
+    ledger_item: '',
+    created_by: s.created_by || root,
+    dispatched_by: s.created_by || root,
+  }))
+}
+
+/** The worker list as shown: the route's rows (which win where both name a key,
+ *  since they carry more), then every open live worker the route did not name
+ *  -- the whole list while the route has not answered or is not served. */
+export function mergeCrewWorkers(listed: readonly CrewWorker[] | undefined, live: readonly CrewWorker[]): CrewWorker[] {
+  const out = [...(listed ?? [])]
+  const seen = new Set(out.map(w => w.key))
+  for (const w of live) if (!seen.has(w.key)) out.push(w)
+  return out
+}
+
 /** One row of the worker list API's group: the server's own (`crew_workers._group`),
  *  which every row carries. `crewWorkerGroupOfRow` is the one client mirror of
  *  that rule, for live slot rows that have no API row. */

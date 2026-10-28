@@ -54,6 +54,7 @@ describe('crewTimeline layout', () => {
     const data = base({ ended: at(60), lanes: [{ ...LANE, segments: [{ kind: 'tool', start: at(15), end: at(30), end_bound: 'recorded', label: '' }] }] })
     const scale = timelineScale(data, timelineWindow(data)!)
     expect(scale.compressed).toBe(false)
+    expect(scale.compressedStretches).toEqual([])
     expect(scale.toPct(Date.parse(at(15)))).toBeCloseTo(25)
   })
 
@@ -72,6 +73,10 @@ describe('crewTimeline layout', () => {
     const xs = [at(0), at(5), at(10), at(500), new Date(end).toISOString()].map(v => scale.toPct(Date.parse(v)))
     expect([...xs].sort((a, b) => a - b)).toEqual(xs)
     expect(LINEAR_MS).toBe(60_000)
+    // The one bent stretch is named for the axis: from the 10s mark to the end.
+    expect(scale.compressedStretches).toHaveLength(1)
+    expect(scale.compressedStretches[0].from).toBeCloseTo(scale.toPct(Date.parse(at(10))))
+    expect(scale.compressedStretches[0].to).toBeCloseTo(100)
   })
 
   it('axis labels on a bent scale never crowd', () => {
