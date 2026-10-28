@@ -45,35 +45,43 @@ _CI = _REPO_ROOT / ".github" / "workflows" / "ci.yml"
 _FAST_GATE = _REPO_ROOT / ".github" / "workflows" / "fast-gate.yml"
 _BUILD = _REPO_ROOT / ".github" / "workflows" / "build.yml"
 
-# The gates the split moved. Named explicitly rather than derived from the
-# file, so a gate silently DROPPED during a future edit fails here. scrub-lint is
-# gone: its replacement is the internal-content-scan check, which runs in its own
+# The stdlib-only gates, each one step of the `source-gates` job, named by the
+# script the step runs. Named explicitly rather than derived from the file, so
+# a gate silently DROPPED during a future edit fails here. scrub-lint is gone:
+# its replacement is the internal-content-scan check, which runs in its own
 # workflow because it needs OIDC and a private ruleset, not a repo script.
-_GATE_JOBS = (
-    "vendor-manifest",
-    "brand-lint",
-    "comment-history-lint",
-    "focus-cue-lint",
-    "feature-map-lint",
-    "changelog-history",
-    "decision-ledger-history",
-    "builtin-skill-scope",
-    "loop-bound-locks",
-    "testpaths-coverage",
-    "cwd-relative-repo-reads",
-    "harness-parity",
-    "docs-lint",
+_SOURCE_GATE_SCRIPTS = (
+    "scripts/verify_vendor_manifest.py",
+    "scripts/check_brand_name.py",
+    "scripts/check_comment_history.py",
+    "scripts/check_focus_cue.py",
+    "scripts/check_feature_map.py",
+    "scripts/check_changelog_history.py",
+    "scripts/check_decisions_history.py",
+    "scripts/check_builtin_skill_scope.py",
+    "scripts/check_loop_bound_locks.py",
+    "scripts/check_testpaths_coverage.py",
+    "scripts/check_cwd_relative_repo_reads.py",
+    "scripts/check_harness_parity.py",
+    "scripts/check_memory_store_seam.py",
+    "scripts/docs-lint.sh",
 )
-# Every job in fast-gate.yml, in file order: the moved gates plus the one gate
-# that was born there. Explicit for the same reason as _GATE_JOBS -- a job added
-# without the push/variable clause would be the one job left running on a
-# queue-on push, and a file-derived list would admit it silently.
-_FAST_GATE_JOBS = _GATE_JOBS[:-1] + (
-    "memory-store-seam",
-    "docs-lint",
+#: The one job that runs every stdlib-only gate as consecutive steps.
+_SOURCE_GATES_JOB = "source-gates"
+# Every job in fast-gate.yml, in file order: the stdlib gates share one job so
+# a push holds one runner slot for all fourteen instead of fourteen; the two
+# pytest-backed ratchets keep their own because each installs the package.
+# Explicit for the same reason as _SOURCE_GATE_SCRIPTS -- a job added without
+# the push/variable clause would be the one job left running on a queue-on
+# push, and a file-derived list would admit it silently.
+_FAST_GATE_JOBS = (
+    _SOURCE_GATES_JOB,
     "static-ratchets",
     "flake-pattern-ratchet",
 )
+#: The condition every gate step carries so one red gate does not hide the
+#: verdicts of the gates after it (the job still fails; see the workflow header).
+_GATE_STEP_CONDITION = "${{ !cancelled() }}"
 
 #: The exact `if` clause that trims a job off the push path while the repository
 #: variable MERGE_QUEUE_ENABLED is 'true', and keeps it there while it is unset.
@@ -432,15 +440,55 @@ def _assert_push_to_main_reaches_exactly_the_macos_boot_leg(ci: dict) -> None:
 
 
 class TestTheGatesLiveInTheGateWorkflow:
+    @staticmethod
+    def _gate_steps(fast_gate: dict) -> list[dict]:
+        steps = fast_gate["jobs"][_SOURCE_GATES_JOB]["steps"]
+        return [step for step in steps if "run" in step]
+
     def test_all_gates_are_in_fast_gate_and_none_left_in_ci(
         self, ci: dict, fast_gate: dict
     ) -> None:
-        missing = [job for job in _GATE_JOBS if job not in fast_gate["jobs"]]
-        assert not missing, f"gate job(s) absent from fast-gate.yml: {missing}"
+        runs = "\n".join(str(step["run"]) for step in self._gate_steps(fast_gate))
+        missing = [script for script in _SOURCE_GATE_SCRIPTS if script not in runs]
+        assert not missing, f"gate(s) absent from fast-gate.yml's {_SOURCE_GATES_JOB}: {missing}"
         # The other direction matters just as much: a gate re-added to ci.yml would
         # run beside the matrix again, which is the arrangement this split removed.
-        strays = [job for job in _GATE_JOBS if job in ci["jobs"]]
-        assert not strays, f"gate job(s) back in ci.yml, racing the matrix again: {strays}"
+        ci_runs = "\n".join(
+            str(step.get("run", ""))
+            for spec in ci["jobs"].values()
+            for step in spec.get("steps") or []
+        )
+        strays = [script for script in _SOURCE_GATE_SCRIPTS if script in ci_runs]
+        assert not strays, f"gate(s) back in ci.yml, racing the matrix again: {strays}"
+
+    def test_every_gate_step_runs_unless_the_run_was_cancelled(self, fast_gate: dict) -> None:
+        # One job, fourteen gates: without the condition the first red gate ends
+        # the job and the author learns about the others one push at a time.
+        # Exactly `!cancelled()`, not `always()`: a cancelled run (a superseding
+        # push) must not keep spending its runner on gates nobody will read.
+        for step in self._gate_steps(fast_gate):
+            assert step.get("if") == _GATE_STEP_CONDITION, (
+                f"gate step {step.get('name')!r} must carry {_GATE_STEP_CONDITION!r}, "
+                f"got {step.get('if')!r}"
+            )
+            assert "continue-on-error" not in step, (
+                f"gate step {step.get('name')!r} is soft; a red gate must red the job"
+            )
+
+    def test_the_gates_run_in_one_job(self, fast_gate: dict) -> None:
+        # The point of the shared job: one runner slot per push for every
+        # stdlib-only gate. A gate that grows back into a job of its own is a
+        # slot the whole repository pays for on every push.
+        pytest_jobs = [
+            job
+            for job, spec in fast_gate["jobs"].items()
+            if any("pytest" in str(step.get("run", "")) for step in spec["steps"])
+        ]
+        assert set(pytest_jobs) == set(_FAST_GATE_JOBS) - {_SOURCE_GATES_JOB}, (
+            "only the pytest-backed ratchets may hold a job of their own; "
+            f"pytest jobs: {pytest_jobs}"
+        )
+        assert len(self._gate_steps(fast_gate)) >= len(_SOURCE_GATE_SCRIPTS)
 
     @pytest.mark.parametrize("job", tuple(_workflow(_FAST_GATE)["jobs"]))
     def test_every_gate_skips_only_the_queued_push(self, fast_gate: dict, job: str) -> None:
@@ -562,7 +610,7 @@ class TestFastGatePythonRuntime:
     )
     def test_runtime_contract_rejects_broken_setup(self, defect: str) -> None:
         # Fresh workflow data keeps each mutation independent of the module fixture.
-        spec = _workflow(_FAST_GATE)["jobs"]["memory-store-seam"]
+        spec = _workflow(_FAST_GATE)["jobs"][_SOURCE_GATES_JOB]
         self._assert_runtime(spec)
         steps = spec["steps"]
         setup = steps[1]
