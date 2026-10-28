@@ -114,6 +114,32 @@ def _first_parent_is_base() -> bool:
     return False
 
 
+def _pr_own_head() -> str:
+    """The PR's own head commit: ``HEAD^2`` on a CI pull-request merge-commit.
+
+    ``actions/checkout`` on a ``pull_request`` event produces a synthetic MERGE
+    commit (``refs/pull/N/merge`` = base_tip merged with PR_head).  The PR's own
+    commits live under ``HEAD^2`` (the second parent).
+
+    Diffing from ``resolve_base(base.sha)`` to the working tree (= the merge
+    commit) therefore spans base.sha through the merge commit -- it includes
+    every file the base branch changed AFTER the PR was opened.  On a stale PR
+    that means hundreds of test files appear "changed" and the stability gate
+    repeats the near-full suite (observed on #24930: 268 files, 3 passes).
+
+    This helper detects the CI PR shape using the same ancestry probe as
+    :func:`_first_parent_is_base`: when HEAD is a merge commit whose first
+    parent the base branch can reach, ``HEAD^2`` is the PR's own head.  On
+    push events and local non-merge-commit runs it returns ``"HEAD"``, leaving
+    :func:`changed_paths_at` and :func:`resolve_base` with their existing
+    working-tree-diff semantics.
+    """
+    code, out = _git("rev-list", "--parents", "-n", "1", "HEAD")
+    if code == 0 and len(out.split()) >= 3 and _first_parent_is_base():
+        return "HEAD^2"
+    return "HEAD"
+
+
 def changed_paths() -> tuple[set[str] | None, str]:
     """This change's paths plus how they were determined, for the log.
 
@@ -329,7 +355,7 @@ def resolve_base(base: str) -> str:
 
 
 def changed_paths_at(frm: str) -> list[str]:
-    """Paths the diff from ``frm`` to the WORKING TREE touches, in git's order.
+    """Paths the diff from ``frm`` to the PR head (or working tree) touches, in git's order.
 
     The explicit-base counterpart of :func:`changed_paths`: the caller names
     the base (CI passes the PR's ``base.sha`` through ``*_BASE_REF``, so a run
@@ -340,6 +366,16 @@ def changed_paths_at(frm: str) -> list[str]:
     a changed file is worse than no gate. ``--diff-filter=d`` drops deletions:
     a removed file has no lines to judge.
 
+    On a CI ``pull_request`` checkout :func:`_pr_own_head` returns ``HEAD^2``
+    (the PR's own tip), so the diff runs from *frm* to the PR's own commits,
+    not to the synthetic merge commit.  That keeps main-branch moves that land
+    after the PR was opened out of scope: on a stale PR every test file main
+    touched would otherwise count as a PR change, and a flaky test main owns
+    becomes a blocker on an unrelated PR (observed on a stale PR: 268 files, 3×).
+    On push events and local non-merge-commit runs the diff target is the
+    working tree, which preserves existing behaviour including uncommitted
+    local edits.
+
     A list, not a set, because git emits the names path-sorted and the
     consuming gates' reports inherit that order — a set would make a
     violation listing nondeterministic. A failing git raises
@@ -348,7 +384,17 @@ def changed_paths_at(frm: str) -> list[str]:
     whole-tree scope, an env-base gate that cannot see its base must refuse to
     pass, not widen.
     """
-    out = _git_strict("diff", "--name-only", "-z", "--diff-filter=d", frm)
+    if _pr_own_head() == "HEAD^2":
+        # CI pull_request merge-commit: use HEAD^1..HEAD to scope to the PR's
+        # own contribution.  HEAD^1 is the base-branch tip; diffing to HEAD
+        # (the merge commit) gives exactly what the PR adds, using the MERGED
+        # path names that match the working tree -- a rename main introduced
+        # is reflected here, while a bare diff against HEAD^2 would return the
+        # pre-merge path that no longer exists in the checked-out tree.
+        out = _git_strict("diff", "--name-only", "-z", "--diff-filter=d", "HEAD^1", "HEAD")
+    else:
+        # push events / local runs: diff to working tree (captures uncommitted changes).
+        out = _git_strict("diff", "--name-only", "-z", "--diff-filter=d", frm)
     return [p for p in out.split("\0") if p]
 
 
