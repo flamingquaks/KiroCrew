@@ -1353,12 +1353,12 @@ class TestSsmDiagnostics:
 
     @pytest.mark.asyncio
     async def test_unlisted_node_is_target_missing_not_unreachable(self, monkeypatch):
-        """#20247: a replaced instance's old id is reported as gone, not as offline.
+        """A replaced instance's old id is reported as gone, not as offline.
 
         After an Auto Scaling instance refresh the row keeps the old ``ssm_target``.
-        SSM lists no node with that id (``[0].PingStatus`` prints ``None``), which
-        the ladder used to fold into ``ssm_unreachable`` and its "check the SSM
-        agent" advice. Driven through the real ``cloud.ssm`` read with a fake
+        SSM lists no node with that id (``[0].PingStatus`` prints ``None``), and
+        the ladder reports ``ssm_target_missing`` rather than ``ssm_unreachable``
+        with its "check the SSM agent" advice. Driven through the real ``cloud.ssm`` read with a fake
         ``run_aws``, so the whole first rung is exercised without AWS.
         """
         import kiro_crew.instances.diagnostics as diag
@@ -1505,7 +1505,7 @@ class TestSsmExitErrorClassification:
         assert "health probe failed" in t._exit_error(0)
 
     def test_target_not_connected_names_a_replaced_instance(self):
-        """#20247: StartSession's error for a replaced instance's old id is the same
+        """StartSession's error for a replaced instance's old id is the same
         as for an offline agent, so the message names both and points at Diagnose."""
         msg = self._tunnel(
             "An error occurred (TargetNotConnected) when calling the StartSession "
