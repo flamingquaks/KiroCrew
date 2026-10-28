@@ -408,6 +408,14 @@ _CREW_SECRET_LEAVES: list[str] = [
     # ``sandbox._CREW_READONLY_LEAVES``, which this entry does not touch: the
     # reader it fences is the AGENT'S OWN FILE TOOLS.
     "member-memory-bindings",
+    # The per-template MCP additions record (``template_mcp_additions``): an approved
+    # server entry's ``env`` or ``headers`` can hold an API key. On this floor for the
+    # same reason as the bindings above: ``sandbox._CREW_CHILD_WITHHELD_LEAVES``
+    # classifies it as one no foreign child may read, and only this floor reaches an
+    # enforced adapter's OS mask and the file-tool read gate. Crew's own sandbox keeps
+    # the directory read-only through ``sandbox._CREW_READONLY_LEAVES``. Every reader
+    # (the installers, the spawn merge, the doctor row) runs in the gateway or CLI.
+    "template-mcp-additions",
     "security_events.jsonl",
     # Rotated SEL segments. sel_rotation.py closes the live log at a size cap and renames
     # it into this directory, so a segment holds exactly the same audit records
@@ -970,7 +978,15 @@ _WRITE_PROTECTED_HOME_PATHS += [
     # are written by the gateway, and reading them decides nothing inside the sandbox.
     f"{prefix}/{leaf}"
     for prefix in _CREW_HOME_PREFIXES
-    for leaf in ("mcp-launch-approvals", "mcp/resolved", "gateway_id", "skill-projection")
+    for leaf in (
+        "mcp-launch-approvals",
+        "mcp/resolved",
+        "gateway_id",
+        "skill-projection",
+        # The per-template MCP additions record: what the next rebuild merges into a
+        # template's spec. Written by the gateway or the CLI, outside the sandbox.
+        "template-mcp-additions",
+    )
 ]
 
 
