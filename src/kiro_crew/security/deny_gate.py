@@ -837,7 +837,7 @@ def _deny_pattern_passes(
                 lower, _rules._DENY_EXCEPTIONS.get(pattern, [])
             )
             if not whole_string_exception_match and _perm_verb_mention_narrows(
-                pattern, lower, mention_cache
+                pattern, lower, mention_cache, tool_name
             ):
                 # Same shape as the glob exception above: a whole-string carve-out
                 # only DEFERS to Pass 2, which re-judges each segment on its own,
@@ -845,7 +845,9 @@ def _deny_pattern_passes(
                 # is emitted here (and GATES the carve-out) because for a search
                 # whose verb and path land in different segments Pass 2 never
                 # matches, so this is the only place the decision is recorded.
-                if _emit_deny_exception_event(tool_name, pattern, _PERM_VERB_MENTION_MECHANISM):
+                if _emit_deny_exception_event(
+                    tool_name, pattern, _perm_verb_mechanism_for(pattern)
+                ):
                     whole_string_exception_match = True
             if not whole_string_exception_match:
                 _emit_deny_event(tool_name, pattern, lower)
@@ -906,7 +908,7 @@ def _deny_pattern_passes(
                 if _rules._deny_pattern_matches(pattern, view, is_regex):
                     if _rules._exception_applies(
                         view, _rules._DENY_EXCEPTIONS.get(pattern, [])
-                    ) or _perm_verb_mention_narrows(pattern, lower, mention_cache):
+                    ) or _perm_verb_mention_narrows(pattern, lower, mention_cache, tool_name):
                         # ``lower``, not ``view``: the mention reading is a
                         # WHOLE-COMMAND judgement and a Pass 2 segment is not
                         # always a command.  ``_split_segments`` is deliberately
@@ -1130,6 +1132,8 @@ def _perm_verb_mechanism_for(pattern: str) -> str:
     """
     if pattern in _submodule("denied_rules")._PERM_VERB_MENTION_PATTERNS:
         return _PERM_VERB_MENTION_MECHANISM
+    if pattern in _submodule("s3_direction")._S3_TRANSFER_PATTERNS:
+        return "_S3_DOWNLOAD"
     return "_DENY_EXCEPTIONS"
 
 
@@ -1137,6 +1141,7 @@ def _perm_verb_mention_narrows(
     pattern: str,
     view: str,
     cache: dict[str, bool],
+    raw: str = "",
 ) -> bool:
     """Whether *pattern* is narrowed away on *view* by an inert-mention reading.
 
@@ -1150,7 +1155,15 @@ def _perm_verb_mention_narrows(
     touching any rule outside the derived set.  The set's size is deliberately
     not written down here: it is derived from the catalog, so a count in prose
     goes stale the next time a row is added or renamed.
+
+    The three ``aws s3 cp|mv|sync`` rows narrow the same way on a different
+    reading: :func:`~.s3_direction._s3_download_only`, true only for one plain
+    download command it read in full, so a command it cannot read stays denied.
+    It also gets *raw*, the command before case folding, to refuse any non-ASCII.
     """
+    s3 = _submodule("s3_direction")
+    if pattern in s3._S3_TRANSFER_PATTERNS:
+        return s3._s3_download_only(view, raw)
     if pattern not in _submodule("denied_rules")._PERM_VERB_MENTION_PATTERNS:
         return False
     verdict = cache.get(view)
