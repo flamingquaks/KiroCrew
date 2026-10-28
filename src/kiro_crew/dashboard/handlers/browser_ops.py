@@ -68,7 +68,7 @@ from typing import Any
 from aiohttp import web
 
 from kiro_crew.browser_harness import ops as harness_ops
-from kiro_crew.browser_harness import url_gate
+from kiro_crew.browser_harness import secret_mask, url_gate
 from kiro_crew.browser_harness.budgets import (
     DECISION_HEADROOM_S,
     ENSURE_TIMEOUT_S,
@@ -173,10 +173,24 @@ def build_context(
     def _record(op: str, args: Any, result: Any, mark: Any) -> Any:
         if mark is None:
             return None
-        return hub.record_op(session_key, op, args, result, mark, loop=True)
+        masked = secret_mask.redact(session_key, result)
+        return hub.record_op(session_key, op, args, masked, mark, loop=True)
 
     def _frames() -> Any:
         return frame_ops(hub, session_key)
+
+    def _page_cdp() -> Any:
+        # The stream's own session, on the tab this session is bound to: the mask's
+        # box query runs in an isolated world there, never through the helper.
+        sess = hub.get(session_key)
+        stream = sess.stream if sess is not None else None
+        if (
+            stream is None
+            or not stream.session_id
+            or stream.target_id != hub.target_of(session_key)
+        ):
+            return None
+        return stream.relay, stream.session_id
 
     return harness_ops.OpContext(
         helper=supervisor.call,
@@ -190,6 +204,8 @@ def build_context(
         mark=_mark,
         record=_record,
         frames=_frames,
+        session_key=session_key,
+        page_cdp=_page_cdp,
     )
 
 
@@ -621,9 +637,11 @@ async def _fenced_op(
         _audit(request, "error", "timeout")
         return {"ok": False, "code": "timeout", "error": f"{op} ran past {budget:g}s"}
     except Exception as exc:  # noqa: BLE001 - a helper or the daemon raised
-        logger.warning("browser op %s failed: %s", op, exc)
+        # A helper's error can quote the page: masked like any page read.
+        error = secret_mask.redact(key, _safe(exc))
+        logger.warning("browser op %s failed: %s", op, error)
         _audit(request, "error", type(exc).__name__)
-        return {"ok": False, "code": "browser_error", "error": _safe(exc)}
+        return {"ok": False, "code": "browser_error", "error": error}
     _audit(request, "allowed")
     if not hub.in_control(key):
         await follow_current_tab(hub, key, supervisor)
