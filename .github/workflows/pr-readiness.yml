@@ -805,13 +805,6 @@ jobs:
           set -uo pipefail
 
           ok=false
-          # True only when the gate ANSWERED that no bound lane comment exists
-          # for this head: zero lanes examined, and no other error. A failed
-          # read, an unreadable comment list or a spent time budget leaves it
-          # false, so those still reach the evaluation as unknown. The text is
-          # the one the review contract's supersession reader returns for an
-          # empty population, and test_pr_readiness_fork_base.py pins the two.
-          no_lanes=false
           dropped=""
           if [ ! -f "$GATE" ]; then
             echo "pr-readiness: supersession evaluator not found at $GATE" >&2
@@ -823,9 +816,6 @@ jobs:
               dropped="$(jq -r '.blocking_dropped[]' <<<"$out" 2>/dev/null || true)"
             else
               echo "pr-readiness: supersession gate could not evaluate: $(jq -r '.error' <<<"$out" 2>/dev/null)" >&2
-              if [ "$(jq -r '(.lanes_seen == 0) and (.error == "no bound lane marker comment was examined, so supersession is not evaluable for this head")' <<<"$out" 2>/dev/null)" = "true" ]; then
-                no_lanes=true
-              fi
             fi
           else
             # stderr deliberately not suppressed: the gate turns every expected
@@ -837,7 +827,6 @@ jobs:
           delim="EOF_$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
           {
             echo "ok=$ok"
-            echo "no_lanes=$no_lanes"
             echo "dropped<<$delim"
             printf '%s\n' "$dropped"
             echo "$delim"
@@ -886,7 +875,6 @@ jobs:
           # this step's outputs so a rename cannot silently empty the env and
           # leave both `case` arms falling through with every test green.
           SUPERSESSION_OK: ${{ steps.supersessions.outputs.ok }}
-          SUPERSESSION_NO_LANES: ${{ steps.supersessions.outputs.no_lanes }}
           SUPERSESSION_DROPPED: ${{ steps.supersessions.outputs.dropped }}
         run: |
           set -euo pipefail
@@ -946,9 +934,8 @@ jobs:
 
           # False only for a fork PR into a non-default base, where no Stage-2
           # fork lane can START (see below). Such a PR is held for a
-          # maintainer, a lane whose trigger never ran is not scored as owed,
-          # and a supersession gate that examined no lane at all is not read as
-          # a read failure.
+          # maintainer, and a lane whose trigger never ran is not scored as
+          # owed.
           fork_lanes_eligible=true
 
           if [ "$FORK" = "true" ]; then
@@ -972,10 +959,12 @@ jobs:
             # Fast Gate carries the same `branches:` filter as CI, so on a
             # stacked fork PR (for example a backport into a release branch)
             # it never starts, and neither does any lane keyed on it. Such a
-            # PR is HELD for a maintainer instead (issue #18530): none of the
-            # pre-merge scan or review coverage a fork gets on the default
-            # branch runs, and unlike a same-repo stacked PR it is never
-            # retargeted to the default branch to get it later. The hold is a
+            # PR is HELD for a maintainer instead: none of the pre-merge scan
+            # or review coverage a fork gets on the default branch runs while
+            # the base is another branch. If GitHub later retargets the PR to
+            # the default branch (as it does when a stacked PR's parent
+            # merges), the recompute on that event reads it as an ordinary
+            # fork PR and the hold lifts. The hold is a
             # terminal `failure`, so the sweep does not re-fire it on age. The
             # lanes stay in the spec list: a fork PR whose base was changed
             # from the default branch keeps every verdict its lanes already
@@ -1759,26 +1748,15 @@ jobs:
               done <<<"${SUPERSESSION_DROPPED:-}"
               ;;
             false)
-              if [ "$fork_lanes_eligible" = "false" ] \
-                && [ "${SUPERSESSION_NO_LANES:-}" = "true" ]; then
-                # No lane can start on this pull request and the gate found
-                # none that did, so there is no sample a later one could have
-                # replaced. That is an answer, not a failed read: stamping it
-                # as one made the sweep re-fire a recompute that re-derived the
-                # same pending forever (issue #18530). A real read failure on
-                # the same PR still takes the arm below.
-                echo "pr-readiness: supersession has nothing to evaluate: no Stage-2 fork lane ran on this fork PR into $BASE_REF"
-              else
-                pending+=("superseded verdicts could not be evaluated")
-                read_failure=true
-              fi
+              pending+=("superseded verdicts could not be evaluated")
+              read_failure=true
               ;;
           esac
 
           # A fork PR into a non-default base gets none of the Stage-2 scan
-          # and review coverage (see fork_lanes_eligible above), and nothing
-          # retargets it to the default branch later, so it cannot pass on its
-          # own: a maintainer reviews it. This is a terminal `failure`, which
+          # and review coverage (see fork_lanes_eligible above) while its base
+          # is not the default branch, so it cannot pass on its own: a
+          # maintainer reviews it. This is a terminal `failure`, which
           # the sweep re-fires only on new evidence, never on age.
           fork_base_hold=false
           if [ "$fork_lanes_eligible" = "false" ]; then
