@@ -100,7 +100,7 @@ def test_the_boot_path_runs_no_host_probe(monkeypatch):
         raise AssertionError("a host probe ran on the boot path")
 
     monkeypatch.setattr(host_power, "note_host", refuse)
-    monkeypatch.setattr(access_set, "install", lambda _seed: None)
+    monkeypatch.setattr(access_set, "install", lambda _seed, **_kw: None)
     tailnet_direct_listener._install_access_set(KiroCrewConfig())
 
 

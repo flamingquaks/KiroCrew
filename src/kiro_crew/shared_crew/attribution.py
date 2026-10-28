@@ -266,3 +266,57 @@ def stamp_principal_author(meta: dict[str, Any], principal: Principal) -> dict[s
 
 def is_person(principal: Principal) -> bool:
     return principal.kind is PrincipalKind.HUMAN
+
+
+_SENDER_LABEL_MAX = 64
+
+
+def _label(text: str) -> str:
+    """*text* as one plain line that cannot close the ``[from: ...]`` frame."""
+    kept = "".join(c if c.isprintable() else " " for c in text if c not in "[]()")
+    return " ".join(kept.split())[:_SENDER_LABEL_MAX]
+
+
+def _owner_ids(owner_id: str) -> frozenset[str]:
+    """Every principal id this machine's owner writes under, local token or tailnet."""
+    from kiro_crew.shared_crew import access_set
+    from kiro_crew.shared_crew.crew_mode import LOCAL_BOOTSTRAP_SUBJECTS
+    from kiro_crew.shared_crew.identity import local_operator_principal
+
+    subjects = set(LOCAL_BOOTSTRAP_SUBJECTS) | ({owner_id} if owner_id else set())
+    ids = {local_operator_principal(s).id for s in subjects}
+    return frozenset(ids | access_set.principal_ids_for(access_set.owner_login(), frozenset()))
+
+
+def sender_line(slot: Any, row: Any, *, owner_id: str = "") -> str:
+    """The line put before a user row's text in the agent's prompt, or ``""``.
+
+    Present when the row's server-stamped author is a person other than this
+    machine's owner, or when more than one person has written in the session,
+    so the agent knows who sent each message. Only the prompt carries it; the
+    stored row keeps the text as typed.
+    """
+    if not isinstance(row, Mapping) or row.get("role") != "user":
+        return ""
+    author = message_author(row.get("meta"))
+    if not is_person(author):
+        return ""
+    owners = _owner_ids(owner_id)
+    people = {
+        "owner" if p.id in owners else p.id
+        for m in getattr(slot, "messages", None) or ()
+        if isinstance(m, Mapping)
+        and m.get("role") == "user"
+        and is_person(p := message_author(m.get("meta")))
+    }
+    if author.id in owners:
+        if len(people) <= 1:
+            return ""
+        from kiro_crew.shared_crew import access_set
+
+        name, login = "owner", _label(access_set.owner_login())
+    else:
+        login = _label(author.display.login)
+        name = _label(author.display.name) or login or "unknown"
+    shown = f"{name} ({login})" if login and login != name else name
+    return f"[from: {shown}]\n"

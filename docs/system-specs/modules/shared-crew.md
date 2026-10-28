@@ -163,9 +163,10 @@ any token is read:
 | No `Forwarded`, `X-Forwarded-*` or `X-Real-IP` header | `forwarded_header` |
 | Daemon `whois` of the peer `ip:port` names a node key and a user with a stable id | `whois_failed` |
 | Same node key as the connection's earlier answer | `node_changed` |
-| Access set readable (the owner is still admitted) | `allowlist_unreadable` |
-| Tagged node: one of its tags is a `tag:<name>` entry the access set carried over | `tagged_node_not_allowed` |
-| Person: the Crew owner (the login and user id of this machine's own node), a login of an accepted Crew invite or of the migration seed, or a stable user id the owner approved (`access_set`, published through `tailnet_live_allowlist`) | `login_not_allowed`, or `awaiting_approval` once the person is listed as waiting |
+| Tagged node: one of its tags is a `tag:<name>` entry the access set carried over (both modes) | `tagged_node_not_allowed` |
+| Person, `local_authorization` off (the default): any person the `whois` names, untagged with a stable user id | none; Tailscale already decided |
+| Person, `local_authorization` on: access set readable (the owner is still admitted) | `allowlist_unreadable` |
+| Person, `local_authorization` on: the Crew owner (the login and user id of this machine's own node), a login of an accepted Crew invite or of the migration seed, or a stable user id the owner approved (`access_set`, published through `tailnet_live_allowlist`) | `login_not_allowed`, or `awaiting_approval` once the person is listed as waiting |
 
 Only the `whois` answer is cached; the admission rule runs on every request, so an
 accepted invite or an approval admits on the next request and a removal is refused
@@ -322,10 +323,29 @@ yields the local operator only together with a dashboard token.
 
 People has no role control in any mode. Its one invite and revoke control is the
 Tailscale invite card below, shown in `personal` and `network` mode to the owner only.
+Inviting adds a person to the tailnet, which is the sharing step. The access card
+(waiting list, Approve, Remove) is shown only with `local_authorization` on.
 
 ### Access set
 
-Tailscale is the only access authority, and who gets in is computed
+**Network trust (default).** `dashboard.shared_crew.local_authorization` (bool,
+default `false`; any value but a literal `false` reads as on; read at gateway start)
+decides whether Crew adds its own approval on top of Tailscale. Off, Tailscale alone
+decides: whoever Tailscale lets reach this machine gets in. `access_set.install`
+publishes the set with `network_trust` on, so the direct listener admits every
+`whois`-verified untagged person, `tailnet.login_allowed` (the `tailscale serve`
+path and mobile setup) admits every verified login but `tagged-devices`, and nobody
+is listed as waiting. Identity still comes from `whois` and is still used for
+attribution and owner rights. Tagged nodes keep the carried-over `tag:` rule. The
+`not_tailnet_peer`, `forwarded_header`, `whois_failed` and `node_changed` refusals
+are unchanged. Approve, Dismiss and Remove answer 409 `local_authorization_off`,
+`GET /api/shared-crew/access` reports `local_authorization: false` and People hides
+the access card. Revoking an invite still deletes it at Tailscale, which ends the
+share; Crew closes no socket and stops no work itself. Removing a person is done by
+removing them from the tailnet. Everything below in this section, and "Removal
+stops work now", applies only with `local_authorization` on.
+
+With `local_authorization` on, who gets in is computed
 (`shared_crew.access_set`), never typed:
 
 | Member | Matched by | Source |
@@ -556,6 +576,17 @@ OpenAI shim) names that request's actor (`attribution.with_request_author`, boun
 inherits it). Channel rows name the bounded Unknown principal and automation rows the
 automation principal (`stamp_principal_author`). A message written before authors
 reads as Unknown (`attribution.message_author`).
+
+Sender in the prompt. The agent is told who sent a message with one line before
+its text, `[from: <display name> (<login>)]` (`attribution.sender_line`, added in
+`prompt_assembly._turn_build_prompt`). It is added when the turn's user row is by a
+person other than this machine's owner (the local operator's subjects and the
+owner's tailnet login), or when more than one person has written in the session,
+in which case the owner's rows read `[from: owner (<owner login>)]`. It reads the
+server-stamped author already on the row; a merged queue row whose entries name
+different people names no one and gets no line. Brackets, parentheses and control
+characters are stripped from the label. Only the prompt carries it: the stored row,
+the transcript the UI shows, the channel mirror and the system prompt are unchanged.
 
 Trigger attribution. A session a schedule, a webhook or the Crew started names
 that trigger instead of a person (`trigger.trigger_of`): `created_by` of

@@ -521,7 +521,8 @@ async def revoke(invite_id: str, actor: str) -> dict[str, Any]:
     async with _commit_lock():
         row, members, closed = await _revoke_locked(api, invite_id, actor)
     stopped = {"cancelled_queued": 0, "stopped_running": 0}
-    for member in members:
+    # Off, Tailscale ending the share is the removal; Crew stops nothing itself.
+    for member in members if access_set.local_authorization() else ():
         # Their running turn stops now; the slot frees once its runtime has stopped.
         login = str(member.get("login") or "")
         for key, n in (await access_set.stop_work(login, frozenset(), actor=actor)).items():
@@ -570,7 +571,8 @@ async def _revoke_locked(
             await allowlist_writer(login, False)
         except Exception:  # noqa: BLE001 -- the live revoke already holds
             logger.warning("removing a revoked login from the allowlist failed", exc_info=True)
-        closed += int(await connection_closer(login) or 0)
+        if access_set.local_authorization():
+            closed += int(await connection_closer(login) or 0)
 
     def _mutate(s: dict[str, Any]) -> None:
         s["invites"].pop(invite_id, None)

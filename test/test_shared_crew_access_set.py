@@ -816,3 +816,108 @@ def test_capabilities_report_keep_awake(monkeypatch) -> None:
         "laptop": True,
         "laptop_reason": "battery_present",
     }
+
+
+# -- network trust: dashboard.shared_crew.local_authorization off ------------- #
+
+TAGGED_IP = "100.64.0.9"
+
+
+def _tagged_whois() -> dict[str, Any]:
+    return {
+        "Node": {"Name": "ci.tail1.ts.net.", "Key": "nodekey:" + "f" * 64, "Tags": ["tag:ci"]},
+        "UserProfile": {"ID": 99, "LoginName": "tagged-devices", "DisplayName": "Tagged"},
+    }
+
+
+def _install_network_trust() -> None:
+    access_set.install(
+        (), owner_login=OWNER.login, owner_user_id=OWNER.user_id, local_authorization=False
+    )
+
+
+def test_local_authorization_defaults_off_and_only_literal_false_turns_it_off() -> None:
+    assert shared_crew_config_from({}).local_authorization is False
+    assert shared_crew_config_from({"local_authorization": False}).local_authorization is False
+    assert shared_crew_config_from({"local_authorization": True}).local_authorization is True
+    assert shared_crew_config_from({"local_authorization": "no"}).local_authorization is True
+
+
+def test_the_listener_installs_the_set_with_the_configured_mode() -> None:
+    from kiro_crew.dashboard import tailnet_direct_listener
+
+    cfg = SimpleNamespace(
+        degraded_sections=set(),
+        dashboard=SimpleNamespace(
+            tailscale=SimpleNamespace(allowed_logins=[]),
+            shared_crew=shared_crew_config_from({}),
+        ),
+    )
+    tailnet_direct_listener._install_access_set(cfg)  # type: ignore[arg-type]
+    assert access_set.local_authorization() is False
+    snap = tailnet_live_allowlist.snapshot()
+    assert snap is not None and snap.network_trust is True
+
+
+@pytest.mark.asyncio
+async def test_an_unapproved_tailnet_peer_is_admitted_by_default_and_never_waits() -> None:
+    _install_network_trust()
+    client = await _client()
+    try:
+        status, me = await _call(client, "GET", "/api/whoami", "100.64.0.7")
+    finally:
+        await client.close()
+    assert status == 200 and me == {"user": "tailnet:uid:31", "owner": False}
+    assert access_set.view()["waiting"] == []
+    # The tailscale serve path follows the same set.
+    assert tailnet.login_allowed("mallory@example.com", ()) is True
+
+
+@pytest.mark.asyncio
+async def test_the_same_peer_is_refused_with_local_authorization_on() -> None:
+    access_set.install(
+        (), owner_login=OWNER.login, owner_user_id=OWNER.user_id, local_authorization=True
+    )
+    client = await _client()
+    try:
+        status, body = await _call(client, "GET", "/api/whoami", "100.64.0.7")
+    finally:
+        await client.close()
+    assert status == 403 and body["reason"] == "awaiting_approval"
+    assert tailnet.login_allowed("mallory@example.com", ()) is False
+
+
+@pytest.mark.asyncio
+async def test_network_trust_still_refuses_tagged_nodes_and_forwarded_headers(
+    monkeypatch,
+) -> None:
+    monkeypatch.setitem(PEERS, TAGGED_IP, _tagged_whois())
+    _install_network_trust()
+    client = await _client()
+    try:
+        tagged, tagged_body = await _call(client, "GET", "/api/whoami", TAGGED_IP)
+        forwarded, fwd_body = await _call(
+            client, "GET", "/api/whoami", "100.64.0.7", **{"X-Forwarded-For": "100.64.0.5"}
+        )
+    finally:
+        await client.close()
+    assert tagged == 403 and tagged_body["reason"] == "tagged_node_not_allowed"
+    assert forwarded == 403 and fwd_body["reason"] == "forwarded_header"
+    assert tailnet.login_allowed("tagged-devices", ()) is False
+
+
+@pytest.mark.asyncio
+async def test_approve_and_remove_answer_local_authorization_off() -> None:
+    _install_network_trust()
+    client = await _client()
+    try:
+        _, view = await _call(client, "GET", "/api/shared-crew/access", OWNER_IP)
+        approve, body = await _call(
+            client, "POST", "/api/shared-crew/access/waiting/31/approve", OWNER_IP
+        )
+        remove, _ = await _call(client, "DELETE", "/api/shared-crew/access/approved/31", OWNER_IP)
+    finally:
+        await client.close()
+    assert view["local_authorization"] is False
+    assert approve == 409 and body["code"] == "local_authorization_off"
+    assert remove == 409

@@ -32,6 +32,8 @@ ACK_PATH = f"{BASE}/first-share/ack"
 APPROVE_PATH = f"{BASE}/waiting/{{user_id}}/approve"
 DISMISS_PATH = f"{BASE}/waiting/{{user_id}}/dismiss"
 APPROVED_PATH = f"{BASE}/approved/{{user_id}}"
+#: Approve, Dismiss and Remove while ``local_authorization`` is off.
+CODE_LOCAL_AUTHORIZATION_OFF = "local_authorization_off"
 _USER_ID_RE = re.compile(r"\A[1-9][0-9]{0,19}\Z")
 
 
@@ -77,11 +79,20 @@ async def _counts(request: web.Request) -> dict[str, Any]:
     return {"sessions": sessions, "memory_items": memory}
 
 
+async def _owner_or_local_refusal(request: web.Request) -> web.Response | None:
+    """The owner gate, then 409 ``local_authorization_off`` while Tailscale alone decides."""
+    refused = await _owner_refusal(request)
+    if refused is None and not access_set.local_authorization():
+        return _error(409, CODE_LOCAL_AUTHORIZATION_OFF)
+    return refused
+
+
 async def api_access(request: web.Request) -> web.Response:
     refused = await _owner_refusal(request)
     if refused is not None:
         return refused
     body = await asyncio.to_thread(access_set.view)
+    body["local_authorization"] = access_set.local_authorization()
     needs_ack = not body["first_share_ack"] and await asyncio.to_thread(
         access_set.nobody_else_has_access
     )
@@ -105,7 +116,7 @@ async def api_ack(request: web.Request) -> web.Response:
 
 
 async def api_approve(request: web.Request) -> web.Response:
-    refused = await _owner_refusal(request)
+    refused = await _owner_or_local_refusal(request)
     if refused is not None:
         return refused
     user_id = _user_id(request)
@@ -119,7 +130,7 @@ async def api_approve(request: web.Request) -> web.Response:
 
 
 async def api_dismiss(request: web.Request) -> web.Response:
-    refused = await _owner_refusal(request)
+    refused = await _owner_or_local_refusal(request)
     if refused is not None:
         return refused
     user_id = _user_id(request)
@@ -133,7 +144,7 @@ async def api_dismiss(request: web.Request) -> web.Response:
 
 
 async def api_remove(request: web.Request) -> web.Response:
-    refused = await _owner_refusal(request)
+    refused = await _owner_or_local_refusal(request)
     if refused is not None:
         return refused
     user_id = _user_id(request)

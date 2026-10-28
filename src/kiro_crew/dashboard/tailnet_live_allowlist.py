@@ -63,6 +63,9 @@ class AccessSnapshot:
     unreadable: bool = False
     #: The data home the set was computed for; another home ignores it.
     home: str = ""
+    #: ``dashboard.shared_crew.local_authorization`` is off: Tailscale alone
+    #: decides, so every verified person is admitted. Tagged nodes still are not.
+    network_trust: bool = False
 
     @property
     def others(self) -> int:
@@ -165,13 +168,17 @@ def granted(login: str) -> bool:
 
 def decision(login: str) -> bool | None:
     """``True`` admitted, ``False`` refused, ``None`` when neither layer decides."""
+    from kiro_crew.dashboard.tailnet import TAGGED_DEVICES_LOGIN
+
     key = _norm(login)
+    snap = snapshot()
+    if snap is not None and snap.network_trust and key and key != TAGGED_DEVICES_LOGIN:
+        return True
     with _LOCK:
         if key in _REVOKED:
             return False
         if key in _GRANTED:
             return True
-    snap = snapshot()
     if snap is not None:
         return snap.admits_login(key)
     return None

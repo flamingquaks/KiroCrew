@@ -37,7 +37,7 @@ def _install_access_set(cfg: KiroCrewConfig) -> None:
 
     unknown = tailnet_identity_unknown(cfg.degraded_sections)
     seed = None if unknown else tuple(cfg.dashboard.tailscale.allowed_logins)
-    access_set.install(seed)
+    access_set.install(seed, local_authorization=cfg.dashboard.shared_crew.local_authorization)
 
 
 def _resolve_blocking(

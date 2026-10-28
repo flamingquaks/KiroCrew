@@ -84,6 +84,8 @@ class _Unreadable(Exception):
 _LOCK = threading.RLock()
 _STATE: Optional[dict[str, Any]] = None
 _OWNER: dict[str, str] = {"login": "", "user_id": ""}
+#: ``dashboard.shared_crew.local_authorization`` as the gateway started with it.
+_MODE: dict[str, bool] = {"local_authorization": True}
 _NEW_TIMES: deque[float] = deque()
 _TOUCHED: dict[str, float] = {}
 
@@ -204,17 +206,24 @@ def _invite_logins() -> set[str]:
 
 
 def install(
-    seed: Optional[tuple[str, ...]], *, owner_login: str = "", owner_user_id: str = ""
+    seed: Optional[tuple[str, ...]],
+    *,
+    owner_login: str = "",
+    owner_user_id: str = "",
+    local_authorization: bool = True,
 ) -> AccessSnapshot:
     """Load (seeding once from *seed*), publish the set and list refused people. Blocking.
 
     *seed* is ``dashboard.tailscale.allowed_logins`` as read; ``None`` (the
     section could not be read) seeds nothing and leaves seeding for a later start.
+    With *local_authorization* off the published set trusts the network: every
+    verified person is admitted and nobody is listed as waiting.
     """
     global _STATE
     with _LOCK:
         _STATE = None
         _OWNER.update(login=_norm(owner_login), user_id=owner_user_id)
+        _MODE["local_authorization"] = bool(local_authorization)
         try:
             state = _state()
             if not state["seeded"] and seed is not None:
@@ -226,6 +235,18 @@ def install(
             logger.warning("shared crew access set is unreadable; only the owner is admitted")
         tailnet_live_allowlist.install_waiting_sink(note_waiting)
         return rebuild()
+
+
+def local_authorization() -> bool:
+    """Whether Crew itself approves and removes people (else Tailscale alone decides)."""
+    with _LOCK:
+        return _MODE["local_authorization"]
+
+
+def owner_login() -> str:
+    """This machine's own Tailscale login, or ``""`` when not known."""
+    with _LOCK:
+        return _OWNER["login"]
 
 
 def set_owner(login: str, user_id: str) -> AccessSnapshot:
@@ -246,6 +267,7 @@ def rebuild() -> AccessSnapshot:
                 owner_user_id=owner_id,
                 unreadable=True,
                 home=_home(),
+                network_trust=not _MODE["local_authorization"],
             )
             tailnet_live_allowlist.install(snap)
             return snap
@@ -258,6 +280,7 @@ def rebuild() -> AccessSnapshot:
             approved_logins=frozenset(_norm(str(a.get("login") or "")) for a in approvals) - {""},
             tags=frozenset(state["seed"]["tags"]),
             home=_home(),
+            network_trust=not _MODE["local_authorization"],
         )
         tailnet_live_allowlist.install(snap)
         return snap
@@ -592,6 +615,7 @@ def reset_for_tests() -> None:
     with _LOCK:
         _STATE = None
         _OWNER.update(login="", user_id="")
+        _MODE["local_authorization"] = True
         _NEW_TIMES.clear()
         _TOUCHED.clear()
         _REMOVED.clear()
@@ -606,7 +630,9 @@ __all__ = [
     "approve",
     "dismiss",
     "install",
+    "local_authorization",
     "note_waiting",
+    "owner_login",
     "principal_ids_for",
     "principal_removed",
     "rebuild",

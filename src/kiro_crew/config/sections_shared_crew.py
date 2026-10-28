@@ -81,12 +81,27 @@ class SharedCrewConfig:
         metadata=_meta(
             "Direct Tailnet Link",
             "While Tailscale runs, also listen on this machine's own Tailscale "
-            "addresses (100.x and fd7a:) on the dashboard port, and let in only "
-            "people Tailscale names whose login is on dashboard.tailscale."
-            "allowed_logins (only you when that list is empty), without a "
-            "dashboard token. Never binds any other address. Off restores the "
+            "addresses (100.x and fd7a:) on the dashboard port, and let in the "
+            "people Tailscale names (all of them, or only those Crew admits when "
+            "local_authorization is on), without a dashboard token. Never binds "
+            "any other address. Off restores the "
             "loopback-only listener. A value that is not true or false reads as "
             "off. Takes effect on the next gateway start.",
+            restart=True,
+        ),
+    )
+    local_authorization: bool = field(
+        default=False,
+        metadata=_meta(
+            "Approve People In Crew",
+            "Off: Tailscale decides who gets in. Every person Tailscale lets reach "
+            "this machine is admitted on the direct tailnet link and through "
+            "tailscale serve, and is still named by Tailscale. On: only you, "
+            "people who accepted a Crew invite and people you approved on People "
+            "get in, and People shows Approve, Remove and the waiting list. "
+            "Tagged nodes are refused unless carried over in both modes. A value "
+            "that is not true or false reads as on. Takes effect on the next "
+            "gateway start.",
             restart=True,
         ),
     )
@@ -149,6 +164,8 @@ def shared_crew_config_from(raw: object) -> SharedCrewConfig:
                 type(raw).__name__,
             )
         values[name] = raw is True
+    # Turning it off widens who gets in, so only a literal false does that.
+    values["local_authorization"] = data.get("local_authorization", False) is not False
     for name in SHARED_CREW_BOUNDS:
         lo, hi = SHARED_CREW_BOUNDS[name]
         values[name] = section.read(name, _safe_int, lo, hi)

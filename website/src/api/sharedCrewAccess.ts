@@ -52,6 +52,8 @@ export interface AccessView {
   seeded: string[]
   first_share_ack: boolean
   first_share: FirstShare
+  /** False: Tailscale alone decides, so Approve, Remove and the waiting list are hidden. */
+  local_authorization?: boolean
 }
 
 /** The header the dashboard sends after its own dialog, for an action that cannot be undone. */

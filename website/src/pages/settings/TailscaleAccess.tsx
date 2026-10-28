@@ -207,6 +207,8 @@ export function TailscaleAccess() {
   // A gateway without the routes (404): nothing to show here.
   if (!access.data) return null
   const view = access.data
+  // Tailscale alone decides who gets in: nothing here to approve or remove.
+  if (view.local_authorization === false) return null
   return (
     <SettingsSection title={i18nT('sharedCrew.waitlist_title')}>
       <SettingsCard>

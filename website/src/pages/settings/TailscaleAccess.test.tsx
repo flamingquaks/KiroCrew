@@ -5,7 +5,7 @@ import { api } from '../../api/client'
 import { ApiError } from '../../api/apiError'
 import type { AccessView, FirstShare, WaitingPerson } from '../../api/sharedCrewAccess'
 import { safeAvatarUrl } from '../../api/sharedCrewAccess'
-import { TailscaleAccess } from './TailscaleAccess'
+import { TailscaleAccess, sharedCrewAccessKey } from './TailscaleAccess'
 
 vi.mock('../../api/client', () => ({
   api: {
@@ -51,6 +51,15 @@ function mount() {
 beforeEach(() => { vi.clearAllMocks() })
 
 describe('TailscaleAccess', () => {
+  it('hides Approve, Remove and the waiting list while local authorization is off', async () => {
+    read.mockResolvedValue(view({ local_authorization: false, waiting: [waiting()] }))
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(<QueryClientProvider client={qc}><TailscaleAccess /></QueryClientProvider>)
+    await waitFor(() => expect(qc.getQueryState(sharedCrewAccessKey)?.status).toBe('success'))
+    expect(screen.queryByTestId('tailscale-access')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('waiting-31')).not.toBeInTheDocument()
+  })
+
   it('lists a waiting person with name, login, first sighting and Approve / Dismiss', async () => {
     read.mockResolvedValue(view({ waiting: [waiting({ avatar_url: 'https://pics.example/m.png' })] }))
     mount()

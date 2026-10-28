@@ -270,13 +270,16 @@ def admission_refusal(
     owner is matched by stable user id. ``allowed_logins`` entries of the form
     ``tag:<name>`` admit an ACL-tagged node carrying that tag and are never a
     login. With no login listed or granted, only the owner is admitted. An
-    unreadable allowlist admits nobody.
+    unreadable allowlist admits nobody. While the derived set trusts the
+    network (``local_authorization`` off), every verified person is admitted.
     """
-    if identity_unknown:
-        return REFUSE_ALLOWLIST_UNREADABLE
     from kiro_crew.dashboard import tailnet_live_allowlist
 
     derived = tailnet_live_allowlist.snapshot()
+    if derived is not None and derived.network_trust and not peer.tagged:
+        return None
+    if identity_unknown:
+        return REFUSE_ALLOWLIST_UNREADABLE
     if derived is not None:
         return _derived_refusal(peer, owner, derived)
     logins, tags = _split_allowlist(allowed_logins)

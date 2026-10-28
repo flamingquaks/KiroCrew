@@ -7760,6 +7760,7 @@
           "containment_enabled": true,
           "hard_limits": false,
           "tailnet_direct": true,
+          "local_authorization": false,
           "typing_idle_seconds": 10
         },
         "restore_sessions": false,
@@ -7999,6 +8000,7 @@
         "containment_enabled": true,
         "hard_limits": false,
         "tailnet_direct": true,
+        "local_authorization": false,
         "typing_idle_seconds": 10
       }
     },
@@ -8081,10 +8083,25 @@
       "sensitive": false,
       "tags": [],
       "label": "Direct Tailnet Link",
-      "help": "While Tailscale runs, also listen on this machine's own Tailscale addresses (100.x and fd7a:) on the dashboard port, and let in only people Tailscale names whose login is on dashboard.tailscale.allowed_logins (only you when that list is empty), without a dashboard token. Never binds any other address. Off restores the loopback-only listener. A value that is not true or false reads as off. Takes effect on the next gateway start.",
+      "help": "While Tailscale runs, also listen on this machine's own Tailscale addresses (100.x and fd7a:) on the dashboard port, and let in the people Tailscale names (all of them, or only those Crew admits when local_authorization is on), without a dashboard token. Never binds any other address. Off restores the loopback-only listener. A value that is not true or false reads as off. Takes effect on the next gateway start.",
       "hasChildren": false,
       "enumValues": null,
       "defaultValue": true,
+      "requiresRestart": true
+    },
+    {
+      "path": "dashboard.shared_crew.local_authorization",
+      "kind": "core",
+      "type": "boolean",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "label": "Approve People In Crew",
+      "help": "Off: Tailscale decides who gets in. Every person Tailscale lets reach this machine is admitted on the direct tailnet link and through tailscale serve, and is still named by Tailscale. On: only you, people who accepted a Crew invite and people you approved on People get in, and People shows Approve, Remove and the waiting list. Tagged nodes are refused unless carried over in both modes. A value that is not true or false reads as on. Takes effect on the next gateway start.",
+      "hasChildren": false,
+      "enumValues": null,
+      "defaultValue": false,
       "requiresRestart": true
     },
     {
