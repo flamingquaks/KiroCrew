@@ -866,6 +866,7 @@ class LiveRecorder:
         # A size from the last turn is not this one's: a point before the first
         # frame falls back to the shown frame's own size.
         rec.frame_w = rec.frame_h = 0
+        url = secret_mask.redact(session_key, url)
         self._submit(session_key, lambda: self.store.start_turn(session_key, turn_id, ts, url))
 
     def turn_ended(self, session_key: str) -> None:
@@ -887,6 +888,7 @@ class LiveRecorder:
         if rec is None or not rec.turn_id or not url:
             return
         turn_id = rec.turn_id
+        url = secret_mask.redact(session_key, url)
         self._submit(session_key, lambda: self.store.note_url(session_key, turn_id, url))
 
     # ── frames ─────────────────────────────────────────────────────────────

@@ -25,6 +25,7 @@ from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from kiro_crew.browser_harness import secret_mask
 from kiro_crew.browser_harness.budgets import TAKEOVER_IDLE_S
 from kiro_crew.browser_harness.screencast import (
     LiveConfig,
@@ -559,9 +560,9 @@ class LiveHub:
         from kiro_crew.browser_harness.recording import now_ms
 
         sess = self._session(session_key)
-        return OpMark(
-            ts_ms=now_ms(), step_seq=sess.step_seq, url=sess.url, inner_seq=sess.inner_seq
-        )
+        # Masked now: the op may leave the origin, and that drops the copy it needs.
+        url = secret_mask.redact(session_key, sess.url)
+        return OpMark(ts_ms=now_ms(), step_seq=sess.step_seq, url=url, inner_seq=sess.inner_seq)
 
     def loop(self, session_key: str, raw: Any) -> None:
         """A loop op's counters (``reflex``): the card's loop line and progress bar."""
@@ -742,6 +743,8 @@ class LiveHub:
         self._update_page(sess, url=url, title=title)
         if self.recorder is not None and url:
             self.recorder.note_url(session_key, url)
+        # The tab left the quick ask's origin: its masked copy is dropped at once.
+        secret_mask.seen_url(session_key, url)
         self._emit(sess)
 
     @staticmethod
@@ -820,6 +823,7 @@ class LiveHub:
         if sess is None or sess.stream is None:
             return
         stream, sess.stream = sess.stream, None
+        secret_mask.drop(session_key)  # no live view, no page: nothing left to mask for
         await stream.stop()
 
     def _tick_for(self, sess: LiveSession) -> Callable[[TickStats], Awaitable[None]]:

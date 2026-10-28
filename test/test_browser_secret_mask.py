@@ -81,6 +81,15 @@ def test_protocol_keys_survive_so_the_guards_still_read_them() -> None:
     }
 
 
+def test_a_value_cut_short_by_a_cap_is_masked_and_protocol_values_are_kept() -> None:
+    sm.hold(KEY, _ask("otp"), {"otp": "482913"})
+    assert sm.redact(KEY, "Your code is 48291\u2026") == f"Your code is {sm.MASK}\u2026"
+    assert sm.redact(KEY, "abc 482") == f"abc {sm.MASK}"  # 3+ leading characters, no mark
+    assert sm.redact(KEY, "page 48") == "page 48"
+    out = sm.redact(KEY, {"code": "e482913", "ref": "e482913", "error": "e482913"})
+    assert out == {"code": "e482913", "ref": "e482913", "error": f"e{sm.MASK}"}
+
+
 def test_the_copy_runs_out_and_is_dropped_on_another_origin() -> None:
     sm.hold(KEY, _ask(), {"password": PASSWORD}, now=100.0)
     assert sm.live(KEY, now=100.0 + sm.HOLD_S - 1) is not None
@@ -289,6 +298,43 @@ async def test_the_replay_events_reach_disk_masked(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_wait_for_cannot_confirm_a_guess_while_a_copy_is_held(tmp_path: Path) -> None:
+    _hold()
+    page = {
+        "textPresent": True,
+        "observe": {"ok": True, "text": "Signed in as Octo.Cat@example.com"},
+    }
+    ctx = _ctx(tmp_path, page)
+    guess = await ops.run_op("wait_for", {"text": "Signed in as Octo", "timeout": 0}, ctx)
+    assert guess["ok"] is False and guess["code"] == "wait_timeout"
+    plain = await ops.run_op("wait_for", {"text": "Signed in as", "timeout": 0}, ctx)
+    assert plain["ok"] is True
+
+
+def test_the_hub_drops_the_copy_when_the_tab_leaves_and_masks_replay_urls() -> None:
+    from kiro_crew.browser_harness import live_hub as lh
+
+    hub = lh.LiveHub()
+    _hold()
+    hub.page_changed(KEY, url="https://login.example.com/u/octo.cat@example.com")
+    assert sm.live(KEY) is not None
+    assert "octo.cat" not in hub.inner_mark(KEY).url.lower()
+    hub.page_changed(KEY, url="https://elsewhere.example.net/")
+    assert sm.live(KEY) is None
+
+
+@pytest.mark.asyncio
+async def test_the_replay_start_url_reaches_disk_masked(tmp_path: Path) -> None:
+    _hold()
+    rec, _store, _clock = make_recorder(tmp_path)
+    rec.turn_started(KEY, TURN, url="https://login.example.com/u/octo.cat@example.com")
+    rec.note_url(KEY, "https://login.example.com/u/octo.cat@example.com/2")
+    rec.turn_ended(KEY)
+    await rec.flush()
+    assert b"octo.cat" not in all_bytes(tmp_path).lower()
+
+
+@pytest.mark.asyncio
 async def test_the_isolated_world_is_reused_and_remade_after_a_navigation() -> None:
     _hold()
     relay = _BoxRelay([], vw=100)
@@ -296,9 +342,12 @@ async def test_the_isolated_world_is_reused_and_remade_after_a_navigation() -> N
     assert await sm.value_boxes(relay, "S1", KEY) is not None
     worlds = [c for c in relay.calls if c[0] == "Page.createIsolatedWorld"]
     assert len(worlds) == 1
-    relay.stale_once = True  # the page navigated: the old context is gone
+    relay.stale_once = True  # the old context is gone
     assert await sm.value_boxes(relay, "S1", KEY) is not None
     assert len([c for c in relay.calls if c[0] == "Page.createIsolatedWorld"]) == 2
+    relay.loader = "L2"  # a new document: a new world, without a failed query first
+    assert await sm.value_boxes(relay, "S1", KEY) is not None
+    assert len([c for c in relay.calls if c[0] == "Page.createIsolatedWorld"]) == 3
 
 
 class _BoxRelay:
@@ -311,13 +360,14 @@ class _BoxRelay:
         self.fail = self.gone = self.partial = False
         self.scrolls: list[tuple[int, int]] = []
         self.stale_once = False
+        self.loader = "L1"
 
     async def send(self, method: str, params: dict[str, Any], session_id: str) -> Any:
         self.calls.append((method, params, session_id))
         if self.fail:
             raise RuntimeError("boom")
         if method == "Page.getFrameTree":
-            return {"frameTree": {"frame": {"id": "F1"}}}
+            return {"frameTree": {"frame": {"id": "F1", "loaderId": self.loader}}}
         if method == "Page.createIsolatedWorld":
             return {"executionContextId": 9}
         if method == "Page.captureScreenshot":

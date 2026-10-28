@@ -20,9 +20,10 @@ What is held: the password and the one-time code, and the username of a sign-in
 "bobcat". The fields themselves stay withheld by element (``data-kc-asked``)
 until the page navigates, held copy or not.
 
-A copy is dropped when :data:`HOLD_S` runs out, when a new ask is answered on the
-session, or when the tab's top frame is seen on another origin. It is never
-logged, stored, published or put in an exception.
+A copy is dropped when :data:`HOLD_S` runs out, when the tab's top frame is seen
+on another origin, or when the session's live view stops; a second fill on the
+same origin joins it. It is never logged, stored, published or put in an
+exception.
 """
 
 from __future__ import annotations
@@ -135,18 +136,43 @@ def redact(session_key: str, value: Any) -> Any:
     held = live(session_key) if session_key else None
     if held is None:
         return value
-    return _redact(held.pattern, value)
+    return _redact(held, value)
 
 
-def _redact(pattern: re.Pattern[str], value: Any) -> Any:
+#: Values the gateway itself writes (a refusal code, a ref, a file path), never page text.
+_PROTOCOL_KEYS = frozenset({"code", "ref", "path", "target_id"})
+#: A cut string ends here when the walker marks the cut.
+_ELLIPSIS = "\u2026"
+
+
+def _redact(held: Held, value: Any) -> Any:
     if isinstance(value, str):
-        return pattern.sub(MASK, value)
+        return _cut_tail(held, held.pattern.sub(MASK, value))
     if isinstance(value, dict):
         # Keys are the walker's and the op's own protocol, never page text.
-        return {k: _redact(pattern, v) for k, v in value.items()}
+        return {k: v if k in _PROTOCOL_KEYS else _redact(held, v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
-        return [_redact(pattern, v) for v in value]
+        return [_redact(held, v) for v in value]
     return value
+
+
+def _cut_tail(held: Held, text: str) -> str:
+    """Mask a value the walker's length cap cut short at the end of *text*.
+
+    A cap keeps the start of a string, so a value can survive only as its own
+    first characters at the very end: masked when 3 or more remain, or any number
+    before the walker's cut mark.
+    """
+    cut = text.endswith(_ELLIPSIS)
+    body = text[:-1] if cut else text
+    least = 1 if cut else 3
+    low = body.lower()
+    for v in held.values:
+        lv = v.lower()
+        for n in range(min(len(lv) - 1, len(low)), least - 1, -1):
+            if low.endswith(lv[:n]):
+                return body[: len(body) - n] + MASK + text[len(body) :]
+    return text
 
 
 #: Where the values are drawn: text runs (by range) and input/textarea values (by
@@ -217,22 +243,28 @@ _BOXES_JS = """(function (vals, origin, MIN) {
 })"""
 
 _WORLD = "kirocrew_secret_mask"
-#: The isolated world's context id per CDP session (one tab each).
-_WORLDS: dict[str, int] = {}
+#: The isolated world per CDP session (one tab each): the top document's loader
+#: id it was made in, and its context id.
+_WORLDS: dict[str, tuple[str, int]] = {}
 
 
 async def _world(relay: Any, session_id: str) -> int:
+    """The top document's isolated world, made again whenever the document changed."""
     tree = await relay.send("Page.getFrameTree", {}, session_id)
-    frame_id = ((tree or {}).get("frameTree") or {}).get("frame", {}).get("id")
+    frame = ((tree or {}).get("frameTree") or {}).get("frame") or {}
+    loader = str(frame.get("loaderId") or "")
+    cached = _WORLDS.get(session_id)
+    if cached is not None and loader and cached[0] == loader:
+        return cached[1]
     made = await relay.send(
         "Page.createIsolatedWorld",
-        {"frameId": frame_id, "worldName": _WORLD, "grantUniveralAccess": False},
+        {"frameId": frame.get("id"), "worldName": _WORLD, "grantUniveralAccess": False},
         session_id,
     )
     ctx_id = made["executionContextId"]
     if not isinstance(ctx_id, int):
         raise TypeError("no context")
-    _WORLDS[session_id] = ctx_id
+    _WORLDS[session_id] = (loader, ctx_id)
     return ctx_id
 
 
@@ -255,16 +287,19 @@ async def value_boxes(relay: Any, session_id: str, session_key: str) -> Boxes | 
     held = live(session_key)
     if held is None:
         return Boxes([], 0.0, (0.0, 0.0))
-    vals = json.dumps([v.lower() for v in held.values])
+    # The raw value and its URL-escaped forms, which a page can draw as link text.
+    vals = json.dumps(
+        sorted({f.lower() for v in held.values for f in (v, quote(v, safe=""), quote_plus(v))})
+    )
     expr = f"{_BOXES_JS}({vals}, {json.dumps(held.origin)}, {MIN_LEN})"
     reply = None
-    # One isolated world per session, reused (the replay asks up to 5 times a
-    # second); a navigation destroys it, and the query then makes a fresh one.
+    # One isolated world per document, reused (the replay asks up to 5 times a
+    # second); a stale one is dropped and the query makes a fresh one once.
     for fresh in (False, True):
         try:
-            ctx_id = _WORLDS.get(session_id) if not fresh else None
-            if ctx_id is None:
-                ctx_id = await _world(relay, session_id)
+            if fresh:
+                _WORLDS.pop(session_id, None)
+            ctx_id = await _world(relay, session_id)
             reply = await relay.send(
                 "Runtime.evaluate",
                 {"expression": expr, "contextId": ctx_id, "returnByValue": True},

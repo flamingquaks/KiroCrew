@@ -797,7 +797,7 @@ async def _wait_for(ctx: OpContext, args: dict[str, Any]) -> dict[str, Any]:
     await _step(ctx, f"Wait for {'text' if want_present else 'text to go'}")
     start = ctx.now()
     for _ in range(max(1, int(WAIT_MAX_S / WAIT_POLL_S)) + 1):
-        present = bool(await _page(ctx, "textPresent", target))
+        present = await _text_present(ctx, target)
         if want_present and present:
             return {"ok": True, "matched": "present", "text": target}
         if not want_present and not present:
@@ -809,6 +809,17 @@ async def _wait_for(ctx: OpContext, args: dict[str, Any]) -> dict[str, Any]:
     return refusal(
         "wait_timeout", f"timed out after {timeout:g}s waiting for text {state}: {target}"
     )
+
+
+async def _text_present(ctx: OpContext, target: str) -> bool:
+    """Is *target* on the page? While a quick-ask copy is held, judged on the
+    masked visible text, so a guess cannot be confirmed one character at a time."""
+    if secret_mask.live(ctx.session_key) is None:
+        return bool(await _page(ctx, "textPresent", target))
+    seen = await _read(ctx, "observe", {"text": True})
+    text = seen.get("text") if isinstance(seen, dict) else None
+    # The visible text (the viewport), masked; the unmasked check reads the body.
+    return isinstance(text, str) and target in text
 
 
 async def _console(ctx: OpContext, args: dict[str, Any]) -> dict[str, Any]:
