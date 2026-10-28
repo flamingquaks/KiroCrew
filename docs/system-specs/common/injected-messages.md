@@ -632,6 +632,20 @@ pass, or one that auto-continues a trivial read — with no round-trip to the us
 - The `reason` is external process output, and it is redacted (exfiltration URLs,
   then credentials) on the dequeue path shared by every queued turn, before the
   continuation is classified or dispatched.
+- **A sub-agent's prompt ends the same way.** A child run fires Stop (Hooks-page
+  hooks and the spec hooks its backend cannot run) each time one of its prompts
+  ends, with that prompt's final segment as `assistant_text` and the child's own
+  `session_key`, `subagent_id` and `parent_session_key`. A block decision sends the
+  redacted reasons to the child as its next prompt on the same session, behind the
+  same prefix, so a Stop gate also covers work a parent delegates. The child
+  continues only after a successful end, with no stop, reap or shutdown under way,
+  and under the same `agent.max_stop_hook_nudges` cap, counted per run; past the
+  cap the run ends as it stands. A prompt that a stall or capacity recovery, or a
+  resume after a host refusal, ends still fires Stop but never continues from it:
+  that path already has its own next step (`subagent_manager/run_turn.py`,
+  `_fire_stop_hooks`). The prompt's stream is drained before the next prompt
+  starts, so the provider's own turn cleanup never lands on the continuation. Each
+  prompt a Stop hook continues writes its own usage row, as a dashboard turn does.
 
 **How to treat it:** it is an instruction from an automation the operator
 configured, not a question from a person. Do the work it asks for and continue.
