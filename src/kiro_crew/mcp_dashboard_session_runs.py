@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import Any, NamedTuple
 from urllib.parse import quote
 
 from kiro_crew.conductor_patrol import reply_line
@@ -27,7 +27,7 @@ from kiro_crew.mcp_dashboard_references import (
     _get_rows,
     _resolve_chat_folder_id,
 )
-from kiro_crew.mcp_tools.dashboard_client import DashboardError
+from kiro_crew.mcp_tools.dashboard_client import DashboardClient, DashboardError
 from kiro_crew.mcp_tools.table import ToolContext
 from kiro_crew.platform import redact_via_context as redact
 from kiro_crew.validation import (
@@ -183,7 +183,82 @@ def _render_session_summary(resp: dict[str, Any]) -> str:
 _PROFILE_COPY_NOTE = "copied from your crewmate profile at creation"
 
 
-def _run_session_create(args: dict[str, Any], ctx: ToolContext) -> str:
+class _Created(NamedTuple):
+    """What one ``session_create`` folder walk plus create call came back with.
+
+    ``resp`` is the create route's JSON reply, or ``None`` when no session was
+    made. Then ``error`` is the text ``session_create`` replies with, and either
+    ``refused`` is the create call's own refusal, or the folder walk stopped first
+    and ``walk_refused`` is the last refusal a request of the walk raised (the
+    create's dry run or a folder write; ``None`` when none raised one). A walk that
+    stopped never sent the create, so no session can exist then, but a folder
+    write whose reply was lost may have made a folder.
+    """
+
+    resp: dict[str, Any] | None
+    folder_label: str
+    made_note: str
+    error: str
+    refused: DashboardError | None
+    walk_refused: DashboardError | None = None
+
+
+class _RefusalCodes:
+    """A dashboard client that remembers every refusal it raised."""
+
+    def __init__(self, client: DashboardClient) -> None:
+        self._client = client
+        self.refusals: list[DashboardError] = []
+
+    def _note(self, refused: DashboardError) -> DashboardError:
+        self.refusals.append(refused)
+        return refused
+
+    def get(
+        self, path: str, *, session_key: str | None = None, timeout: float | None = None
+    ) -> Any:
+        try:
+            return self._client.get(path, session_key=session_key, timeout=timeout)
+        except DashboardError as refused:
+            raise self._note(refused)
+
+    def post(
+        self,
+        path: str,
+        body: dict[str, Any] | None = None,
+        *,
+        session_key: str | None = None,
+        timeout: float | None = None,
+    ) -> Any:
+        try:
+            return self._client.post(path, body, session_key=session_key, timeout=timeout)
+        except DashboardError as refused:
+            raise self._note(refused)
+
+    def patch(
+        self, path: str, body: dict[str, Any] | None = None, *, session_key: str | None = None
+    ) -> Any:
+        return self._client.patch(path, body, session_key=session_key)
+
+    def put(
+        self, path: str, body: dict[str, Any] | None = None, *, session_key: str | None = None
+    ) -> Any:
+        return self._client.put(path, body, session_key=session_key)
+
+    def delete(
+        self, path: str, body: dict[str, Any] | None = None, *, session_key: str | None = None
+    ) -> Any:
+        return self._client.delete(path, body, session_key=session_key)
+
+
+def _create_session(args: dict[str, Any], ctx: ToolContext, *, keep_walk: bool = False) -> _Created:
+    """Run ``session_create``'s folder walk and create call, and return the reply.
+
+    Shared by ``session_create``, which renders the reply as text, and
+    ``work_dispatch``, which needs the key the route returned. ``keep_walk`` sends
+    the walk through :class:`_RefusalCodes` so a refusal that stopped it comes
+    back as ``walk_refused``; ``session_create`` has no use for it.
+    """
     payload: dict[str, Any] = {"title": args.get("title", ""), "agent": args.get("agent", "")}
     if args.get("model"):
         payload["model"] = args["model"]
@@ -202,6 +277,11 @@ def _run_session_create(args: dict[str, Any], ctx: ToolContext) -> str:
             f"{_create_refusal_remedy(refused, payload)}"
         )
 
+    walk = _RefusalCodes(ctx.client)
+    walk_ctx = (
+        ToolContext(client=walk, caller=ctx.caller, caller_key=ctx.caller_key) if keep_walk else ctx
+    )
+
     def _preflight_create(deepest_id: str) -> str | None:
         # The same create, as a dry run, against the folder the new path
         # segments would hang from. Its refusal is the real create's, rendered
@@ -211,19 +291,19 @@ def _run_session_create(args: dict[str, Any], ctx: ToolContext) -> str:
         if deepest_id:
             probe["folder_id"] = deepest_id
         try:
-            ctx.client.post("/api/session-control/create", probe, session_key=ctx.caller_key)
+            walk_ctx.client.post("/api/session-control/create", probe, session_key=ctx.caller_key)
         except DashboardError as refused:
             return _refused(refused, " (no folder was created)")
         return None
 
     fld_id, folder_label, made_note, fld_err = _resolve_folder_for_new_session(
-        ctx,
+        walk_ctx,
         str(args.get("folder") or ""),
         "filing a new session at creation",
         preflight=_preflight_create,
     )
     if fld_err:
-        return fld_err
+        return _Created(None, "", made_note, fld_err, None, next(reversed(walk.refusals), None))
     if fld_id:
         payload["folder_id"] = fld_id
     try:
@@ -233,7 +313,15 @@ def _run_session_create(args: dict[str, Any], ctx: ToolContext) -> str:
             session_key=ctx.caller_key,
         )
     except DashboardError as refused:
-        return f"Error: {_refused(refused, made_note)}"
+        return _Created(None, "", made_note, f"Error: {_refused(refused, made_note)}", refused)
+    return _Created(resp, folder_label, made_note, "", None)
+
+
+def _run_session_create(args: dict[str, Any], ctx: ToolContext) -> str:
+    created = _create_session(args, ctx)
+    if created.resp is None:
+        return created.error
+    resp, folder_label, made_note = created.resp, created.folder_label, created.made_note
     filed = f" filed in `{folder_label}`" if folder_label else ""
     on_model = f" on model `{resp['model']}`" if resp.get("model") else ""
     if resp.get("reasoning_effort"):
@@ -975,3 +1063,223 @@ def _run_session_summary(args: dict[str, Any], ctx: ToolContext) -> str:
     except DashboardError as refused:
         return f"Error: could not read that session's summary: {refused.error}"
     return _render_session_summary(resp)
+
+
+#: The ``kirocrew-work`` route ``work_dispatch`` writes the ledger through, as the caller.
+_WORK_RECORD_ROUTE = "/api/work-ledger/record"
+
+
+def _agent_spec_mounts_work(agent: str, project: str, agent_kind: str = "") -> bool:
+    """Whether the spec *agent* runs on mounts the ``kirocrew-work`` server.
+
+    *agent* is the slot's stored name, which may be a crew alias: it is resolved to
+    the kiro agent the session runs, as ``resolve_agent_bindings`` binds it at
+    launch, and that agent's spec is read. The project checkout's own spec wins
+    over the user-level one, as it does at launch. Anything that cannot be
+    resolved or read answers ``False``, so the dispatch is refused, not admitted.
+    """
+    from kiro_crew import agent as agent_mod
+    from kiro_crew.config.loader import KiroCrewConfig
+    from kiro_crew.config.loader_agents import resolve_agent_bindings
+
+    try:
+        agent = resolve_agent_bindings(
+            KiroCrewConfig.load(),
+            agent,
+            project or None,
+            validate_memory_files=False,
+            selection_kind=agent_kind,
+        ).kiro_agent
+        path = agent_mod._project_shadow_of(
+            agent, project or None, markdown_specs=False, dispatchable_only=True
+        ) or agent_mod.agent_spec_path(agent)
+        spec = agent_mod._read_spec_capped(path) if path is not None else None
+    except Exception:  # noqa: BLE001 - any failure to resolve refuses the dispatch
+        return False
+    servers = spec.get("mcpServers") if isinstance(spec, dict) else None
+    return isinstance(servers, dict) and "kirocrew-work" in servers
+
+
+def _work_ledger_mount_refusal(ctx: ToolContext) -> str:
+    """Why this caller may not dispatch, or ``""``.
+
+    ``/api/work-ledger/record`` checks the caller's session key, not which server
+    sent the request, and ``action=create`` opens a ledger for any such caller. So
+    the tool answers only a session whose agent already mounts ``@kirocrew-work``:
+    it then reaches exactly the sessions that already hold ``session_create``,
+    ``session_send`` and ``work_ledger_record``.
+    """
+    refusal = (
+        "Error: work_dispatch refused (code=work_ledger_not_mounted): {why}. "
+        "work_dispatch is for a conductor whose agent mounts @kirocrew-work. "
+        "Nothing was created."
+    )
+    rows, err = _get_rows(ctx.client, "/api/chat/slots")
+    if err:
+        return refusal.format(why=f"your session could not be read ({err})")
+    # A dashboard tab answers to `dashboard:<slot key>`; a tab bound to a channel
+    # or a schedule runs its turns under its `linked_session_key`. The row is read
+    # only to name the agent; every step's route still judges the caller itself.
+    key = ctx.caller_key
+    slot_key = key.split(":", 1)[1] if key.startswith("dashboard:") else ""
+    row = next(
+        (
+            r
+            for r in rows
+            if (slot_key and str(r.get("key") or "") == slot_key)
+            or (key and str(r.get("linked_session_key") or "") == key)
+        ),
+        None,
+    )
+    if row is None:
+        return refusal.format(
+            why=(
+                "no open session tab answers to this session, so its agent cannot be "
+                "read; run the four dispatch calls one at a time instead"
+            )
+        )
+    agent = str(row.get("effective_agent") or row.get("agent") or "")
+    project, kind = str(row.get("project") or ""), str(row.get("agent_kind") or "")
+    if not agent or not _agent_spec_mounts_work(agent, project, kind):
+        return refusal.format(why=f"the agent spec of `{agent or '(none)'}` does not mount it")
+    return ""
+
+
+def _dispatch_outcome(refused: DashboardError) -> tuple[str, str]:
+    """``(outcome, code)`` of a failed step: a lost reply is never a refusal."""
+    if refused.body.get("transport_error"):
+        return "outcome_unknown", ""
+    return "refused", refused.code
+
+
+def _dispatch_cleanup(ctx: ToolContext, step: str, item_id: str, target: str) -> list[str]:
+    """Close the session, then the item, best effort; one line per action.
+
+    A refused cleanup is reported with the id that survived, never retried.
+    """
+    lines: list[str] = []
+    actions: list[tuple[str, str, dict[str, Any]]] = []
+    if target:
+        actions.append(
+            (f"close session `{target}`", "/api/session-control/close", {"target": target})
+        )
+    if item_id:
+        decision = f"work_dispatch failed at step {step}; nothing was sent."
+        body = {"action": "close", "item_id": item_id, "state": "abandoned", "decision": decision}
+        actions.append((f"close item `{item_id}` as abandoned", _WORK_RECORD_ROUTE, body))
+    for label, route, body in actions:
+        try:
+            ctx.client.post(route, body, session_key=ctx.caller_key)
+        except DashboardError as refused:
+            outcome, code = _dispatch_outcome(refused)
+            lines.append(f"cleanup: {label}: {outcome} (code={code or 'none'}): {refused.error}")
+            continue
+        lines.append(f"cleanup: {label}: done")
+    return lines
+
+
+def _dispatch_failed(
+    step: str,
+    outcome: str,
+    code: str,
+    error: object,
+    ids: tuple[str, str],
+    tail: list[str],
+) -> str:
+    """The reply for a dispatch that stopped at *step*."""
+    item_id, target = ids
+    head = (
+        f"Error: work_dispatch stopped at step={step} outcome={outcome} "
+        f"code={code or 'none'}: {error}"
+    )
+    held = f"item_id={item_id or '(none)'} worker_session_key={target or '(none)'}"
+    return redact("\n".join([head, held, *tail]))
+
+
+def _run_work_dispatch(args: dict[str, Any], ctx: ToolContext) -> str:
+    """Create, open, bind and seed one work item, in that order (rfc-work-dispatch.md).
+
+    Each step is the route the four-call path uses, called as the caller. The seed
+    goes only to the key step 2 returned, and only after ``bind`` succeeded.
+    """
+    refusal = _work_ledger_mount_refusal(ctx)
+    if refusal:
+        return refusal
+    not_sent = "seed: not sent"
+    look = (
+        "seed: not sent. Read your board (work_ledger_read) and sidebar (session_status) "
+        "for anything this step may have made before dispatching again."
+    )
+
+    # Step 1: create the item.
+    create = {"action": "create", "title": args["title"], "acceptance": args["acceptance"]}
+    try:
+        item = ctx.client.post(_WORK_RECORD_ROUTE, create, session_key=ctx.caller_key)
+    except DashboardError as refused:
+        outcome, code = _dispatch_outcome(refused)
+        tail = [look if outcome == "outcome_unknown" else not_sent]
+        return _dispatch_failed("create", outcome, code, refused.error, ("", ""), tail)
+    item_id = str((item.get("item") or {}).get("item_id") or "")
+    if not item_id:
+        error = "the reply named no item_id"
+        return _dispatch_failed("create", "outcome_unknown", "", error, ("", ""), [look])
+
+    # Step 2: open the session, filed in its folder.
+    opened = _create_session(
+        {
+            "title": args.get("session_title") or args["title"],
+            **{
+                k: args[k]
+                for k in ("agent", "agent_kind", "folder", "model", "reasoning_effort")
+                if args.get(k)
+            },
+        },
+        ctx,
+        keep_walk=True,
+    )
+    target = str((opened.resp or {}).get("target") or "")
+    if not target:
+        outcome, code = ("outcome_unknown", "") if opened.resp is not None else ("refused", "")
+        stopped = opened.refused or opened.walk_refused
+        if stopped is not None:
+            outcome, code = _dispatch_outcome(stopped)
+        error = opened.error.removeprefix("Error: ") or "the reply named no session key"
+        cleanup = _dispatch_cleanup(ctx, "session_create", item_id, "")
+        tail = [look if outcome == "outcome_unknown" else not_sent, *cleanup]
+        return _dispatch_failed("session_create", outcome, code, error, (item_id, ""), tail)
+
+    # Step 3: bind the item to the key step 2 returned.
+    bind = {"action": "bind", "item_id": item_id, "worker_session_key": target}
+    try:
+        bound = ctx.client.post(_WORK_RECORD_ROUTE, bind, session_key=ctx.caller_key)
+    except DashboardError as refused:
+        outcome, code = _dispatch_outcome(refused)
+        cleanup = _dispatch_cleanup(ctx, "bind", item_id, target)
+        tail = [not_sent, *cleanup]
+        return _dispatch_failed("bind", outcome, code, refused.error, (item_id, target), tail)
+
+    # Step 4: seed. Only reached once the bind succeeded.
+    seed = {"target": target, "message": args["seed"], "steer": False}
+    try:
+        sent = ctx.client.post("/api/session-control/send", seed, session_key=ctx.caller_key)
+    except DashboardError as refused:
+        outcome, code = _dispatch_outcome(refused)
+        tail = ["The item is bound and the session exists; nothing was cleaned up."]
+        if outcome == "outcome_unknown":
+            tail.append(
+                "Check the session with session_read_message before resending: a blind "
+                "resend can seed it twice."
+            )
+        else:
+            tail.append("Seed it with session_send once the refusal is resolved.")
+        return _dispatch_failed("seed", outcome, code, refused.error, (item_id, target), tail)
+    delivery = "started a turn" if sent.get("started") else "queued"
+    filed = f" filed in `{opened.folder_label}`" if opened.folder_label else ""
+    return redact(
+        f"\U0001f4cc Dispatched item `{item_id}` to `{target}`{filed}: created, opened, "
+        f"bound, and seeded ({delivery}).{opened.made_note}\n"
+        f"item_id={item_id} worker_session_key={target}"
+        + reply_line(bound)
+        + _worker_capabilities_line(opened.resp or {})
+        + _worker_capabilities_line(sent)
+    )

@@ -793,11 +793,19 @@ from kiro_crew.mcp_dashboard_references import (  # noqa: E402, F401
 )
 from kiro_crew.mcp_dashboard_session_runs import (  # noqa: E402, F401
     _PROFILE_COPY_NOTE,
+    _WORK_RECORD_ROUTE,
     GENERATE_TITLE_TIMEOUT_SECS,
     SESSION_STATUS_READ_TIMEOUT_SECS,
+    _agent_spec_mounts_work,
     _closed_at_display,
     _create_refusal_remedy,
+    _create_session,
+    _Created,
+    _dispatch_cleanup,
+    _dispatch_failed,
+    _dispatch_outcome,
     _pending_approval_phrase,
+    _RefusalCodes,
     _render_session_summary,
     _resolve_folder_for_new_session,
     _run_session_adopt,
@@ -822,7 +830,9 @@ from kiro_crew.mcp_dashboard_session_runs import (  # noqa: E402, F401
     _run_session_status,
     _run_session_stop,
     _run_session_summary,
+    _run_work_dispatch,
     _summary_time,
+    _work_ledger_mount_refusal,
     _worker_capabilities_line,
 )
 from kiro_crew.mcp_dashboard_session_tools import (  # noqa: E402, F401
