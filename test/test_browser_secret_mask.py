@@ -92,6 +92,10 @@ def test_a_value_cut_short_by_a_cap_is_masked_and_protocol_values_are_kept() -> 
     sm.hold(KEY, _ask(), {"username": "abcdefghijklmnopqrstu@example.com"})
     cell = "abcdefghijklmnopqrstu@example.com: 48291"  # 40 characters, cut by the cap
     assert sm.redact(KEY, cell) == f"{sm.MASK}: {sm.MASK}"
+    # A whole value that ends the string is masked whole, not cut by its own tail.
+    sm.hold(KEY, _ask(), {"password": "correct-horse-123"})
+    sm.hold(KEY, _ask("otp"), {"otp": "123456"})
+    assert sm.redact(KEY, f"{pad} correct-horse-123") == f"{pad} {sm.MASK}"
     out = sm.redact(KEY, {"code": "e482913", "ref": "e482913", "error": "e482913"})
     assert out == {"code": "e482913", "ref": "e482913", "error": f"e{sm.MASK}"}
     # Only an op result's own top level: a caller-named read called "code" is page text.

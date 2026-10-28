@@ -152,9 +152,7 @@ _ELLIPSIS = "\u2026"
 
 def _redact(held: Held, value: Any) -> Any:
     if isinstance(value, str):
-        # The cut is judged on the string as the walker cut it, before a whole
-        # value elsewhere in it is masked (masking first would shorten it).
-        return held.pattern.sub(MASK, _cut_tail(held, value))
+        return _mask_text(held, value)
     if isinstance(value, dict):
         # Keys are the walker's and the op's own protocol, never page text.
         return {k: _redact(held, v) for k, v in value.items()}
@@ -163,25 +161,50 @@ def _redact(held: Held, value: Any) -> Any:
     return value
 
 
-def _cut_tail(held: Held, text: str) -> str:
-    """Mask a value the walker's length cap cut short at the end of *text*.
+def _mask_text(held: Held, text: str) -> str:
+    """*text* with every held value, and one a length cap cut at its end, masked.
+
+    Both are found on the string as it came, and their spans are masked together,
+    so neither match can hide the other.
+    """
+    spans = [m.span() for m in held.pattern.finditer(text)]
+    tail = _cut_tail(held, text)
+    if tail is not None:
+        spans.append(tail)
+    if not spans:
+        return text
+    out, at = [], 0
+    for start, end in sorted(spans):
+        if start < at:  # overlaps the span just masked: widen it
+            at = max(at, end)
+            continue
+        out.append(text[at:start] + MASK)
+        at = end
+    out.append(text[at:])
+    return "".join(out)
+
+
+def _cut_tail(held: Held, text: str) -> tuple[int, int] | None:
+    """The span of a value the walker's length cap cut short at the end of *text*.
 
     A cap keeps the start of a string, so a value (or an escaped form) can survive
     only as its own first characters at the very end of a string at least as long
-    as the walker's smallest cap: masked when 3 or more remain, or any number
-    before the walker's cut mark. A shorter string was never cut.
+    as the walker's smallest cap: 3 or more of them, or any number before the
+    walker's cut mark. A shorter string was never cut.
     """
     cut = text.endswith(_ELLIPSIS)
     body = text[:-1] if cut else text
     if len(body) < _SHORTEST_CAP:
-        return text
+        return None
     least = 1 if cut else 3
     low = body.lower()
-    for lv in sorted({f.lower() for v in held.values for f in _variants(v)}, key=len):
-        for n in range(min(len(lv) - 1, len(low)), least - 1, -1):
+    best = 0
+    for lv in {f.lower() for v in held.values for f in _variants(v)}:
+        for n in range(min(len(lv) - 1, len(low)), max(least, best + 1) - 1, -1):
             if low.endswith(lv[:n]):
-                return body[: len(body) - n] + MASK + text[len(body) :]
-    return text
+                best = n
+                break
+    return (len(body) - best, len(body)) if best else None
 
 
 #: Where the values are drawn: text runs (by range) and input/textarea values (by
