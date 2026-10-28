@@ -8,6 +8,7 @@ turn replay's frames. The person's own live view is never masked by value.
 
 from __future__ import annotations
 
+import base64
 import io
 import json
 from pathlib import Path
@@ -17,7 +18,7 @@ from typing import Any
 import pytest
 from browser_live_helpers import frame_event
 from PIL import Image
-from test_browser_turn_replay import jpeg, probe_stream
+from test_browser_turn_replay import TURN, all_bytes, jpeg, make_recorder, probe_stream
 
 from kiro_crew.browser_harness import ops
 from kiro_crew.browser_harness import secret_mask as sm
@@ -53,7 +54,6 @@ def test_every_form_of_a_held_value_is_masked_in_every_string() -> None:
         "nodes": [{"name": f"Signed in as {EMAIL.upper()}"}, {"value": f"<b>{PASSWORD}</b>"}],
         "console": [f'{{"pw": "{PASSWORD}"}}', "unrelated"],
         "plus": "q=octo.cat%40example.com",
-        f"key {PASSWORD}": 1,
     }
     out = json.dumps(sm.redact(KEY, shown))
     assert PASSWORD.lower() not in out.lower() and "octo.cat" not in out.lower()
@@ -66,8 +66,17 @@ def test_only_sign_in_and_code_values_are_held_and_short_ones_are_not_matched() 
     sm.hold(KEY, _ask("otp"), {"otp": "482913"})
     assert sm.redact(KEY, "code 482913 sent") == f"code {sm.MASK} sent"
     sm.hold(KEY, _ask(), {"username": "bob", "password": PASSWORD})
-    assert sm.redact(KEY, "hi bob") == "hi bob"  # too short to match text; the field stays withheld
-    assert sm.MASK not in "x" * sm.MIN_LEN and len(sm.MASK) < sm.MIN_LEN
+    # A short value is masked as a whole word only.
+    assert sm.redact(KEY, "Hi Bob, bobcat") == f"Hi {sm.MASK}, bobcat"
+
+
+def test_protocol_keys_survive_so_the_guards_still_read_them() -> None:
+    sm.hold(KEY, _ask(), {"username": "type", "password": "password"})
+    # Keys are never rewritten, and the guards' own reads are not masked at all.
+    assert sm.redact(KEY, {"password": True, "label": "type"}) == {
+        "password": True,
+        "label": sm.MASK,
+    }
 
 
 def test_the_copy_runs_out_and_is_dropped_on_another_origin() -> None:
@@ -77,6 +86,7 @@ def test_the_copy_runs_out_and_is_dropped_on_another_origin() -> None:
     assert KEY not in sm._HELD
     _hold()
     sm.seen_url(KEY, "https://login.example.com/home")
+    assert sm.live(KEY) is not None
     assert sm.live(KEY) is not None
     sm.seen_url(KEY, "https://other.example.net/")
     assert sm.live(KEY) is None
@@ -95,6 +105,8 @@ def test_a_new_answer_replaces_the_copy() -> None:
 
 def _ctx(tmp_path: Path, page: dict[str, Any], **kw: Any) -> ops.OpContext:
     async def helper(name: str, **args: Any) -> Any:
+        if name == "screenshot":
+            assert sm.live(KEY) is None, "a held copy never goes through the helper's file"
         if name == "js":
             expr = args["expression"]
             for method, value in page.items():
@@ -127,8 +139,10 @@ async def test_snapshot_console_and_wait_text_reach_the_agent_masked(tmp_path: P
     text = json.dumps([snap, logs])
     assert snap["ok"] and PASSWORD not in text and EMAIL.lower() not in text.lower()
     assert "e1" in snap["snapshot"]  # refs and structure survive
-    # The decision model and the fast loop read the page through the same seam.
-    assert EMAIL not in json.dumps(await ops._page(ctx, "snapshot"))
+    # The decision model and the fast loop read content through the same seam; the
+    # guards' own reads (``_page``) are left whole, so a check never reads a mask.
+    assert EMAIL not in json.dumps(await ops._read(ctx, "snapshot"))
+    assert EMAIL in json.dumps(await ops._page(ctx, "snapshot"))
 
 
 @pytest.mark.asyncio
@@ -138,6 +152,9 @@ async def test_a_screenshot_has_the_value_boxes_painted_black(tmp_path: Path) ->
     ctx = _ctx(tmp_path, {"askedValues": 0}, page_cdp=lambda: (relay, "S1"))
     out = await ops.run_op("screenshot", {}, ctx)
     assert out["ok"], out
+    # Captured on the gateway's own session into memory: the helper wrote nothing,
+    # so no raw pixels ever sat in the agent-readable directory.
+    assert any(m == "Page.captureScreenshot" for m, _p, _s in relay.calls)
     with Image.open(out["path"]) as img:
         assert img.getpixel((40, 40)) == (0, 0, 0)  # inside (20..100, 20..60)
         assert img.getpixel((150, 90)) == (255, 255, 255)
@@ -147,7 +164,7 @@ async def test_a_screenshot_has_the_value_boxes_painted_black(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("why", ["no_stream", "query_fails", "scrolled", "partial"])
+@pytest.mark.parametrize("why", ["no_stream", "query_fails", "scrolled", "partial", "gone"])
 async def test_a_screenshot_whose_value_boxes_are_unknown_goes_nowhere(
     tmp_path: Path, why: str
 ) -> None:
@@ -159,6 +176,8 @@ async def test_a_screenshot_whose_value_boxes_are_unknown_goes_nowhere(
         relay.scrolls = [(0, 0), (0, 50)]
     if why == "partial":
         relay.partial = True
+    if why == "gone":
+        relay.gone = True
     cdp = None if why == "no_stream" else (relay, "S1")
     ctx = _ctx(tmp_path, {"askedValues": 0}, page_cdp=lambda: cdp)
     out = await ops.run_op("screenshot", {}, ctx)
@@ -192,8 +211,8 @@ async def test_the_other_origin_answer_drops_the_copy() -> None:
     _hold()
     relay = _BoxRelay([], vw=100)
     relay.gone = True
-    found = await sm.value_boxes(relay, "S1", KEY)
-    assert found is not None and found.boxes == [] and sm.live(KEY) is None
+    # Unknown, not "nothing drawn": a frame captured before the navigation may show it.
+    assert await sm.value_boxes(relay, "S1", KEY) is None and sm.live(KEY) is None
 
 
 @pytest.mark.asyncio
@@ -249,6 +268,19 @@ async def test_the_replay_paints_the_value_boxes_and_the_card_does_not() -> None
     assert sink.recorded[-1][3] is False  # unknown value boxes: the frame is not kept
 
 
+@pytest.mark.asyncio
+async def test_the_replay_events_reach_disk_masked(tmp_path: Path) -> None:
+    _hold()
+    rec, _store, _clock = make_recorder(tmp_path)
+    rec.turn_started(KEY, TURN)
+    url = "https://login.example.com/u/octo.cat@example.com"
+    rec.event(KEY, {"ts": 1, "op": "click", "actor": "agent", "url": url, "label": EMAIL})
+    rec.turn_ended(KEY)
+    await rec.flush()
+    data = all_bytes(tmp_path).lower()
+    assert b"octo.cat" not in data and b"click" in data
+
+
 class _BoxRelay:
     """Answers the mask's three CDP calls with fixed boxes."""
 
@@ -267,6 +299,10 @@ class _BoxRelay:
             return {"frameTree": {"frame": {"id": "F1"}}}
         if method == "Page.createIsolatedWorld":
             return {"executionContextId": 9}
+        if method == "Page.captureScreenshot":
+            out = io.BytesIO()
+            Image.new("RGB", (200, 100), (255, 255, 255)).save(out, format="PNG")
+            return {"data": base64.b64encode(out.getvalue()).decode()}
         self.expressions.append(params["expression"])
         if self.gone:
             return {"result": {"value": {"gone": True}}}

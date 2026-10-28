@@ -469,7 +469,7 @@ def _inside(x: float, y: float, rect: Any) -> bool:
 async def _snapshot(ctx: _ops.OpContext) -> tuple[str, str, list[Any]] | None:
     """``(outline, title, nodes)`` of the current page, or ``None``."""
     try:
-        data = await _ops._page(ctx, "snapshot")
+        data = await _ops._read(ctx, "snapshot")
     except Exception:  # noqa: BLE001 - no outline means no decision, never a failed op
         logger.debug("browser decisions: snapshot failed", exc_info=True)
         return None

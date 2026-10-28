@@ -51,6 +51,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+from kiro_crew.browser_harness import secret_mask
+
 logger = logging.getLogger(__name__)
 
 #: Directory under the data home every recording lives in.
@@ -995,6 +997,9 @@ class LiveRecorder:
             # size can change before the frame the replay shows (a settle frame).
             event = {**event, "fw": rec.frame_w, "fh": rec.frame_h}
         turn_id = rec.turn_id
+        # Every event whole (URL, label, args, result), the agent's and the
+        # person's: a quick-ask value the page showed back is masked here too.
+        event = secret_mask.redact(session_key, event)
         self._submit(session_key, lambda: self.store.add_event(session_key, turn_id, event))
 
     def user_input(self, session_key: str, event: Any, url: str = "") -> None:
@@ -1063,6 +1068,9 @@ class LiveRecorder:
             "type", rec.typed_ts, rec.typed_url, args={"chars": chars, "secret": True}
         )
         turn_id = rec.turn_id
+        # Every event whole (URL, label, args, result), the agent's and the
+        # person's: a quick-ask value the page showed back is masked here too.
+        event = secret_mask.redact(session_key, event)
         self._submit(session_key, lambda: self.store.add_event(session_key, turn_id, event))
 
     # ── deletion ───────────────────────────────────────────────────────────

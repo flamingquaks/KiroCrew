@@ -15,10 +15,10 @@ few exits that carry page content out use it:
   (``screencast.py``). The person's own live view is left as the page draws it.
 
 What is held: the password and the one-time code, and the username of a sign-in
-(``credentials``) ask; never the plain ``text`` kind. Values shorter than
-:data:`MIN_LEN` are not matched in text (they would hit ordinary words); the
-fields themselves stay withheld by element (``data-kc-asked``) until the page
-navigates, held copy or not.
+(``credentials``) ask; never the plain ``text`` kind. A value shorter than
+:data:`MIN_LEN` is matched only as a whole word, so ``bob`` masks "Hi bob" but not
+"bobcat". The fields themselves stay withheld by element (``data-kc-asked``)
+until the page navigates, held copy or not.
 
 A copy is dropped when :data:`HOLD_S` runs out, when a new ask is answered on the
 session, or when the tab's top frame is seen on another origin. It is never
@@ -28,6 +28,7 @@ logged, stored, published or put in an exception.
 from __future__ import annotations
 
 import asyncio
+import base64
 import html
 import io
 import json
@@ -42,9 +43,9 @@ logger = logging.getLogger(__name__)
 
 #: How long a copy is kept after the gateway typed it.
 HOLD_S = 5 * 60.0
-#: Shortest value matched in text and pixels.
+#: Shorter values are matched only as whole words.
 MIN_LEN = 4
-#: What a masked value reads as. Shorter than :data:`MIN_LEN`, so it never holds one.
+#: What a masked value reads as.
 MASK = "***"
 #: The roles whose values are held, by ask kind.
 _HELD_ROLES = {"credentials": ("username", "password"), "otp": ("otp",)}
@@ -79,14 +80,20 @@ def hold(session_key: str, ask: Any, values: dict[str, str], *, now: float | Non
     """Keep a copy of the values *ask* is about to type, for :data:`HOLD_S`."""
     _HELD.pop(session_key, None)
     roles = _HELD_ROLES.get(ask.spec.kind, ())
-    kept = tuple(v for r in roles if isinstance(v := values.get(r), str) and len(v) >= MIN_LEN)
+    kept = tuple(v for r in roles if isinstance(v := values.get(r), str) and v.strip())
     if not kept:
         return
     forms = sorted({f for v in kept for f in _variants(v)}, key=len, reverse=True)
-    pattern = re.compile("|".join(re.escape(f) for f in forms), re.IGNORECASE)
+    pattern = re.compile("|".join(_word(f) for f in forms), re.IGNORECASE)
     origin = ask.top_origin or ask.origin
     start = time.monotonic() if now is None else now
     _HELD[session_key] = Held(kept, origin, ask.origin != origin, start + HOLD_S, pattern)
+
+
+def _word(form: str) -> str:
+    """A form as a pattern: anywhere when long enough, else only as a whole word."""
+    escaped = re.escape(form)
+    return escaped if len(form) >= MIN_LEN else rf"(?<!\w){escaped}(?!\w)"
 
 
 def drop(session_key: str) -> None:
@@ -127,7 +134,8 @@ def _redact(pattern: re.Pattern[str], value: Any) -> Any:
     if isinstance(value, str):
         return pattern.sub(MASK, value)
     if isinstance(value, dict):
-        return {_redact(pattern, k): _redact(pattern, v) for k, v in value.items()}
+        # Keys are the walker's and the op's own protocol, never page text.
+        return {k: _redact(pattern, v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_redact(pattern, v) for v in value]
     return value
@@ -138,15 +146,25 @@ def _redact(pattern: re.Pattern[str], value: Any) -> Any:
 #: of embedded documents it cannot read. Run in the top frame's isolated world, so
 #: page script cannot see the values or move the boxes; the values are matched
 #: lower-cased, and only when the document is still on the held origin.
-_BOXES_JS = """(function (vals, origin) {
+_BOXES_JS = """(function (vals, origin, MIN) {
   if (location.origin !== origin) return { gone: true };
   var out = [], frames = [], partial = false;
   var push = function (r, ox, oy) {
     if (r.width > 0 && r.height > 0) out.push([r.left + ox, r.top + oy, r.width, r.height]);
   };
+  // A short value counts only as a whole word (secret_mask.MIN_LEN).
+  var word = /[0-9A-Za-z_\u00c0-\uffff]/;
+  var whole = function (s, at, v) {
+    return v.length >= MIN || ((at === 0 || !word.test(s.charAt(at - 1)))
+      && (at + v.length >= s.length || !word.test(s.charAt(at + v.length))));
+  };
   var hit = function (s) {
     s = s.toLowerCase();
-    for (var i = 0; i < vals.length; i++) if (s.indexOf(vals[i]) !== -1) return true;
+    for (var i = 0; i < vals.length; i++) {
+      for (var at = s.indexOf(vals[i]); at !== -1; at = s.indexOf(vals[i], at + 1)) {
+        if (whole(s, at, vals[i])) return true;
+      }
+    }
     return false;
   };
   var walk = function (root, doc, d, ox, oy) {
@@ -155,6 +173,7 @@ _BOXES_JS = """(function (vals, origin) {
       var low = n.data.toLowerCase();
       for (var i = 0; i < vals.length; i++) {
         for (var at = low.indexOf(vals[i]); at !== -1; at = low.indexOf(vals[i], at + 1)) {
+          if (!whole(low, at, vals[i])) continue;
           var rg = doc.createRange();
           if (low.length === n.data.length) { rg.setStart(n, at); rg.setEnd(n, at + vals[i].length); }
           else rg.selectNodeContents(n);
@@ -204,7 +223,8 @@ async def value_boxes(relay: Any, session_id: str, session_key: str) -> Boxes | 
     """Where the session's held values are drawn on its tab now. ``None``: unknown.
 
     No copy held: no boxes. The top frame on another origin: the copy is dropped
-    and there are no boxes. A frame it cannot read counts only for an ask that was
+    and this answer is ``None``: a frame captured just before that navigation can
+    still show a value, so the new page's empty answer must not let it through. A frame it cannot read counts only for an ask that was
     itself inside a frame (its values live there): its whole box is painted.
     """
     held = live(session_key)
@@ -218,7 +238,8 @@ async def value_boxes(relay: Any, session_id: str, session_key: str) -> Boxes | 
             {"frameId": frame_id, "worldName": _WORLD, "grantUniveralAccess": False},
             session_id,
         )
-        expr = f"{_BOXES_JS}({json.dumps([v.lower() for v in held.values])}, {json.dumps(held.origin)})"
+        vals = json.dumps([v.lower() for v in held.values])
+        expr = f"{_BOXES_JS}({vals}, {json.dumps(held.origin)}, {MIN_LEN})"
         reply = await relay.send(
             "Runtime.evaluate",
             {"expression": expr, "contextId": made["executionContextId"], "returnByValue": True},
@@ -232,7 +253,7 @@ async def value_boxes(relay: Any, session_id: str, session_key: str) -> Boxes | 
         return None
     if value.get("gone"):
         drop(session_key)
-        return Boxes([], 0.0, (0.0, 0.0))
+        return None
     boxes, frames = value.get("boxes"), value.get("frames")
     if value.get("partial") or not isinstance(boxes, list) or not isinstance(frames, list):
         return None
@@ -258,9 +279,9 @@ def _box(b: Any) -> bool:
 PAD_PX = 3
 
 
-def burn_png(data: bytes, found: Boxes) -> bytes | None:
-    """The PNG with every box painted black; ``None`` when that cannot be done."""
-    if not found.boxes:
+def burn_png(data: bytes, found: Boxes, max_dim: int = 0) -> bytes | None:
+    """The PNG with every box painted black, then fit in *max_dim*; ``None`` on failure."""
+    if not found.boxes and not max_dim:
         return data
     try:
         from PIL import Image, ImageDraw
@@ -281,6 +302,8 @@ def burn_png(data: bytes, found: Boxes) -> bytes | None:
                 ],
                 fill=(0, 0, 0),
             )
+        if max_dim and max(rgb.size) > max_dim:
+            rgb.thumbnail((max_dim, max_dim))
         out = io.BytesIO()
         rgb.save(out, format="PNG")
         return out.getvalue()
@@ -289,16 +312,20 @@ def burn_png(data: bytes, found: Boxes) -> bytes | None:
         return None
 
 
-async def masked_shot(ctx: Any, path: Any, **kw: Any) -> bool:
-    """Take the op's screenshot into *path* with every held value painted out.
+async def masked_shot(ctx: Any, path: Any, *, max_dim: int = 0) -> bool:
+    """Write the op's screenshot to *path* with every held value painted out.
 
-    ``False`` when no image may go out: a copy is held and the boxes are unknown
-    (no stream on the tab, a failed query), the page scrolled between the two box
-    reads around the capture, or the paint failed. The file is then removed.
+    With no copy held this is the helper's own screenshot. With one held the frame
+    is captured on the stream's own CDP session into memory, painted, and only the
+    painted bytes are written: the raw pixels never touch a file the agent can
+    read. ``False`` (nothing written) when the boxes are unknown (no stream on the
+    tab, a failed query, the page left the origin), the page scrolled between the
+    two box reads around the capture, or the paint failed.
     """
     key = getattr(ctx, "session_key", "")
     if not key or live(key) is None:
-        await ctx.helper("screenshot", path=str(path), **kw)
+        extra = {"max_dim": max_dim} if max_dim else {}
+        await ctx.helper("screenshot", path=str(path), **extra)
         return True
     cdp = ctx.page_cdp()
     if cdp is None:
@@ -307,37 +334,23 @@ async def masked_shot(ctx: Any, path: Any, **kw: Any) -> bool:
     before = await value_boxes(relay, session_id, key)
     if before is None:
         return False
-    await ctx.helper("screenshot", path=str(path), **kw)
-    after = await value_boxes(relay, session_id, key)
-    ok = after is not None
-    if after is not None and (before.boxes or after.boxes):
-        # Both reads saw the page at one scroll, so the boxes are where the capture drew.
-        ok = after.scroll == before.scroll
-        if ok:
-            both = Boxes(before.boxes + after.boxes, after.vw or before.vw, after.scroll)
-            ok = await asyncio.to_thread(_burn_file, path, both)
-    if not ok:
-        await asyncio.to_thread(_unlink, path)
-    return ok
-
-
-def _burn_file(path: Any, found: Boxes) -> bool:
     try:
-        data = path.read_bytes()
-    except OSError:
+        shot = await relay.send("Page.captureScreenshot", {"format": "png"}, session_id)
+        data = base64.b64decode((shot or {})["data"])
+    except Exception:  # noqa: BLE001 - no frame, never an unmasked one
+        logger.debug("secret mask: capture failed")
         return False
-    painted = burn_png(data, found) if data else None
+    after = await value_boxes(relay, session_id, key)
+    if after is None:
+        return False
+    if (before.boxes or after.boxes) and after.scroll != before.scroll:
+        return False  # the boxes would not be where the capture drew them
+    both = Boxes(before.boxes + after.boxes, after.vw or before.vw, after.scroll)
+    painted = await asyncio.to_thread(burn_png, data, both, max_dim)
     if painted is None:
         return False
-    path.write_bytes(painted)
+    await asyncio.to_thread(path.write_bytes, painted)
     return True
-
-
-def _unlink(path: Any) -> None:
-    try:
-        path.unlink(missing_ok=True)
-    except OSError:
-        pass
 
 
 __all__ = [

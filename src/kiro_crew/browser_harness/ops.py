@@ -309,12 +309,6 @@ async def _page(ctx: OpContext, method: str, *args: Any) -> Any:
     take the cross-origin frames into account, failing closed when one cannot
     be read.
     """
-    # Every page read leaves through here, masked: the agent's ops, the decision
-    # model's outline and the fast loop's state all read the page this way.
-    return secret_mask.redact(ctx.session_key, await _page_raw(ctx, method, *args))
-
-
-async def _page_raw(ctx: OpContext, method: str, *args: Any) -> Any:
     framed = split_frame_ref(args[0]) if args else None
     if framed is not None:
         frames = ctx.frames()
@@ -336,6 +330,13 @@ async def _page_raw(ctx: OpContext, method: str, *args: Any) -> Any:
         # Focus is inside a cross-origin frame: judge the field there, or nothing.
         value = inner if inner is not None else {**value, "unreadable": True}
     return value
+
+
+async def _read(ctx: OpContext, method: str, *args: Any) -> Any:
+    """:func:`_page` for a read whose CONTENT goes out (to the agent, the decision
+    model, the fast loop's state): a value the person typed through a quick ask is
+    masked in it (``secret_mask``). The guards' own reads stay :func:`_page`."""
+    return secret_mask.redact(ctx.session_key, await _page(ctx, method, *args))
 
 
 async def _in_control(ctx: OpContext) -> bool:
@@ -549,7 +550,7 @@ async def _with_frames(ctx: OpContext, nodes: list[Any]) -> list[Any]:
 
 async def _snapshot(ctx: OpContext, _args: dict[str, Any]) -> dict[str, Any]:
     await _step(ctx, "Read the page")
-    data = await _page(ctx, "snapshot")
+    data = await _read(ctx, "snapshot")
     if not isinstance(data, dict) or not isinstance(data.get("nodes"), list):
         return refusal("snapshot_error", "snapshot walker returned no data")
     nodes = await _with_frames(ctx, data["nodes"])
@@ -816,7 +817,7 @@ async def _console(ctx: OpContext, args: dict[str, Any]) -> dict[str, Any]:
         limit = CONSOLE_CAP
     limit = max(1, min(limit, CONSOLE_CAP))
     await _step(ctx, "Read the console")
-    messages = await _page(ctx, "consoleMessages", limit)
+    messages = await _read(ctx, "consoleMessages", limit)
     return {"ok": True, "messages": messages if isinstance(messages, list) else []}
 
 
@@ -933,9 +934,11 @@ async def run_op(op: str, args: dict[str, Any], ctx: OpContext) -> dict[str, Any
 
     async def masked(c: OpContext, a: dict[str, Any]) -> dict[str, Any]:
         # What the helper answered (a title, a URL, a tab list) is page content too.
-        out = secret_mask.redact(c.session_key, await raw(c, a))
-        if op in ("navigate", "back", "snapshot") and isinstance(out, dict):
-            secret_mask.seen_url(c.session_key, out.get("url"))
+        got = await raw(c, a)
+        out = secret_mask.redact(c.session_key, got)
+        if op in ("navigate", "back") and isinstance(got, dict):
+            # The URL as the page reported it, never the masked copy the agent gets.
+            secret_mask.seen_url(c.session_key, got.get("url"))
         return out  # type: ignore[no-any-return]
 
     if ctx.decisions is not None:

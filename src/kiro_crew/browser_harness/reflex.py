@@ -421,7 +421,7 @@ def _higher(a: str, b: str) -> str:
 
 
 async def _cells(ctx: _ops.OpContext, selector: str) -> list[dict[str, Any]] | None:
-    found = await _ops._page(ctx, "cells", selector)
+    found = await _ops._read(ctx, "cells", selector)
     if (
         not isinstance(found, dict)
         or not found.get("ok")
@@ -472,7 +472,7 @@ class Loop:
         if plan.until_text:
             opts["until"] = plan.until_text
         try:
-            seen = await _ops._page(self.ctx, "observe", opts)
+            seen = await _ops._read(self.ctx, "observe", opts)
         except Exception:  # noqa: BLE001 - mid-navigation; the caller judges a None
             logger.debug("reflex: observe failed", exc_info=True)
             return None
@@ -918,7 +918,7 @@ async def run(ctx: _ops.OpContext, args: dict[str, Any]) -> dict[str, Any]:
         if refused is not None:
             return refused
         try:
-            seen = await _ops._page(ctx, "observe", {"table": True, "text": True})
+            seen = await _ops._read(ctx, "observe", {"table": True, "text": True})
         except Exception:  # noqa: BLE001 - unreadable page: nothing can be pointed to
             seen = None
         page = ""

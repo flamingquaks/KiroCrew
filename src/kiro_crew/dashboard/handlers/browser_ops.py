@@ -173,8 +173,7 @@ def build_context(
     def _record(op: str, args: Any, result: Any, mark: Any) -> Any:
         if mark is None:
             return None
-        masked = secret_mask.redact(session_key, result)
-        return hub.record_op(session_key, op, args, masked, mark, loop=True)
+        return hub.record_op(session_key, op, args, result, mark, loop=True)
 
     def _frames() -> Any:
         return frame_ops(hub, session_key)
