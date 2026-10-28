@@ -12,7 +12,7 @@ import hashlib
 import json
 import re
 import uuid
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -438,14 +438,16 @@ def _redact_segment(
                     and saved[0]
                     != (
                         strict := _redact_segment_text(
-                            slot, whole, False, _ordered_out=strict_order
+                            slot, whole, tuple(removed), _ordered_out=strict_order
                         )
                     )[0]
                 ):
                     # A delta boundary split an SRI value, so its delta redacted
                     # the bare digest the whole text keeps. One pass with that
-                    # exemption off is main's verdict on the digest; save it if
-                    # it passes the same checks, rather than withhold the reply.
+                    # exemption off for each digest holding a removed value is
+                    # main's verdict on that digest, and keeps every digest no
+                    # delta cut; save it if it passes the same checks, rather
+                    # than withhold the reply.
                     if not _whole_text_refusal(strict, per_delta, removed):
                         saved, reason, order = strict, "", strict_order
         except Exception as exc:  # noqa: BLE001 -- any failure must fail closed
@@ -620,7 +622,7 @@ def _records_hold_removed_credential(
 def _redact_segment_text(
     slot: _ChatSlot,
     text: str,
-    keep_sri_digests: bool = True,
+    judged_sri_values: Collection[str] = (),
     *,
     _ordered_out: list[bool] | None = None,
 ) -> tuple[str, list[dict], list[dict]]:
@@ -641,7 +643,7 @@ def _redact_segment_text(
         logger.warning("Exfiltration URL redacted in chat segment: %s", w)
     links_before = redacted.count(EXFILTRATION_REDACTION_TAG_PREFIX)
     redacted, cred_warnings, matches = redact_credentials_with_records(
-        redacted, keep_sri_digests=keep_sri_digests
+        redacted, judged_sri_values=judged_sri_values
     )
     if (
         _ordered_out is not None
