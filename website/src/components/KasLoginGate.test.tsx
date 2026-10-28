@@ -256,6 +256,45 @@ describe('KasLoginGate', () => {
     })
   })
 
+  it('company SSO form remembers the submitted URL and region for the next visit', async () => {
+    const first = renderWithProviders(<KasLoginGate />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue with company SSO' }))
+    await screen.findByTestId('kas-login-sso-form')
+    fireEvent.change(screen.getByLabelText('Company sign-in URL'), {
+      target: { value: ' https://acme.awsapps.com/start ' },
+    })
+    fireEvent.change(screen.getByLabelText('AWS Region (optional)'), {
+      target: { value: 'eu-west-1' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+    expect(await screen.findByTestId('kas-login-user-code')).toHaveTextContent('ABCD-EFGH')
+    first.unmount()
+
+    // A reload or gateway restart mounts the chooser again; the fields are filled.
+    renderWithProviders(<KasLoginGate />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue with company SSO' }))
+    await screen.findByTestId('kas-login-sso-form')
+    expect(screen.getByLabelText('Company sign-in URL')).toHaveValue('https://acme.awsapps.com/start')
+    expect(screen.getByLabelText('AWS Region (optional)')).toHaveValue('eu-west-1')
+    expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled()
+  })
+
+  it('company SSO form keeps nothing that was only typed, never submitted', async () => {
+    const first = renderWithProviders(<KasLoginGate />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue with company SSO' }))
+    await screen.findByTestId('kas-login-sso-form')
+    fireEvent.change(screen.getByLabelText('Company sign-in URL'), {
+      target: { value: 'https://half.awsapps.com/start' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    first.unmount()
+
+    renderWithProviders(<KasLoginGate />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue with company SSO' }))
+    await screen.findByTestId('kas-login-sso-form')
+    expect(screen.getByLabelText('Company sign-in URL')).toHaveValue('')
+  })
+
   // ---- loopback transport ---------------------------------------------------
 
   it('loopback shape: Google opens the portal tab and shows the browser-wait screen', async () => {
