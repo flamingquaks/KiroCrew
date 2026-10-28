@@ -88,6 +88,9 @@ def test_a_value_cut_short_by_a_cap_is_masked_and_protocol_values_are_kept() -> 
     assert sm.redact(KEY, "page 48") == "page 48"
     out = sm.redact(KEY, {"code": "e482913", "ref": "e482913", "error": "e482913"})
     assert out == {"code": "e482913", "ref": "e482913", "error": f"e{sm.MASK}"}
+    # Only an op result's own top level: a caller-named read called "code" is page text.
+    nested = sm.redact(KEY, {"state": {"read": {"code": "482913"}}})
+    assert nested == {"state": {"read": {"code": sm.MASK}}}
 
 
 def test_the_copy_runs_out_and_is_dropped_on_another_origin() -> None:

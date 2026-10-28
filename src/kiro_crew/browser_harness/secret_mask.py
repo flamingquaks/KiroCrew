@@ -136,10 +136,14 @@ def redact(session_key: str, value: Any) -> Any:
     held = live(session_key) if session_key else None
     if held is None:
         return value
+    if isinstance(value, dict):
+        # Only an op result's own top-level fields are the gateway's protocol; any
+        # nested name (a caller-named read, a state) is masked like page text.
+        return {k: v if k in _PROTOCOL_KEYS else _redact(held, v) for k, v in value.items()}
     return _redact(held, value)
 
 
-#: Values the gateway itself writes (a refusal code, a ref, a file path), never page text.
+#: An op result's top-level values the gateway itself writes, never page text.
 _PROTOCOL_KEYS = frozenset({"code", "ref", "path", "target_id"})
 #: A cut string ends here when the walker marks the cut.
 _ELLIPSIS = "\u2026"
@@ -150,7 +154,7 @@ def _redact(held: Held, value: Any) -> Any:
         return _cut_tail(held, held.pattern.sub(MASK, value))
     if isinstance(value, dict):
         # Keys are the walker's and the op's own protocol, never page text.
-        return {k: v if k in _PROTOCOL_KEYS else _redact(held, v) for k, v in value.items()}
+        return {k: _redact(held, v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_redact(held, v) for v in value]
     return value
