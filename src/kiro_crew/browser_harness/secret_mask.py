@@ -145,6 +145,8 @@ def redact(session_key: str, value: Any) -> Any:
 
 #: An op result's top-level values the gateway itself writes, never page text.
 _PROTOCOL_KEYS = frozenset({"code", "ref", "path", "target_id"})
+#: The walker's shortest length cap (``snapshot_walker.js``): nothing shorter is cut.
+_SHORTEST_CAP = 40
 #: A cut string ends here when the walker marks the cut.
 _ELLIPSIS = "\u2026"
 
@@ -163,16 +165,18 @@ def _redact(held: Held, value: Any) -> Any:
 def _cut_tail(held: Held, text: str) -> str:
     """Mask a value the walker's length cap cut short at the end of *text*.
 
-    A cap keeps the start of a string, so a value can survive only as its own
-    first characters at the very end: masked when 3 or more remain, or any number
-    before the walker's cut mark.
+    A cap keeps the start of a string, so a value (or an escaped form) can survive
+    only as its own first characters at the very end of a string at least as long
+    as the walker's smallest cap: masked when 3 or more remain, or any number
+    before the walker's cut mark. A shorter string was never cut.
     """
     cut = text.endswith(_ELLIPSIS)
     body = text[:-1] if cut else text
+    if len(body) < _SHORTEST_CAP:
+        return text
     least = 1 if cut else 3
     low = body.lower()
-    for v in held.values:
-        lv = v.lower()
+    for lv in sorted({f.lower() for v in held.values for f in _variants(v)}, key=len):
         for n in range(min(len(lv) - 1, len(low)), least - 1, -1):
             if low.endswith(lv[:n]):
                 return body[: len(body) - n] + MASK + text[len(body) :]

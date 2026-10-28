@@ -793,6 +793,7 @@ class LiveHub:
         old, sess.stream = sess.stream, None
         if old is not None:
             await old.stop()
+        secret_mask.seen_url(session_key, url)  # a tab on another origin drops the copy
         factory = stream_factory or LiveStream
         stream = factory(
             relay,
@@ -823,7 +824,6 @@ class LiveHub:
         if sess is None or sess.stream is None:
             return
         stream, sess.stream = sess.stream, None
-        secret_mask.drop(session_key)  # no live view, no page: nothing left to mask for
         await stream.stop()
 
     def _tick_for(self, sess: LiveSession) -> Callable[[TickStats], Awaitable[None]]:

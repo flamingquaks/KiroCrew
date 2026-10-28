@@ -83,9 +83,11 @@ def test_protocol_keys_survive_so_the_guards_still_read_them() -> None:
 
 def test_a_value_cut_short_by_a_cap_is_masked_and_protocol_values_are_kept() -> None:
     sm.hold(KEY, _ask("otp"), {"otp": "482913"})
-    assert sm.redact(KEY, "Your code is 48291\u2026") == f"Your code is {sm.MASK}\u2026"
-    assert sm.redact(KEY, "abc 482") == f"abc {sm.MASK}"  # 3+ leading characters, no mark
-    assert sm.redact(KEY, "page 48") == "page 48"
+    pad = "x" * 40
+    assert sm.redact(KEY, f"{pad} code 48291\u2026") == f"{pad} code {sm.MASK}\u2026"
+    assert sm.redact(KEY, f"{pad} 482") == f"{pad} {sm.MASK}"  # 3+ leading characters
+    assert sm.redact(KEY, f"{pad} 48") == f"{pad} 48"
+    assert sm.redact(KEY, "abc 482") == "abc 482"  # too short to have been cut
     out = sm.redact(KEY, {"code": "e482913", "ref": "e482913", "error": "e482913"})
     assert out == {"code": "e482913", "ref": "e482913", "error": f"e{sm.MASK}"}
     # Only an op result's own top level: a caller-named read called "code" is page text.
