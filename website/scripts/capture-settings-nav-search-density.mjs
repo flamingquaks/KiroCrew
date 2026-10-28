@@ -2,8 +2,8 @@
  * Screenshot harness for the Settings search dropdown's row density in the
  * desktop nav rail (dock 'nav').
  *
- * Runs the REAL built SPA (website/dist) behind a tiny in-process static server
- * with SPA fallback and answers every /api/** call from fixtures via Playwright
+ * Runs the REAL built SPA (website/dist) behind the shared lib/serve-dist.mjs
+ * static server and answers every /api/** call from fixtures via Playwright
  * route interception, like capture-settings-search.mjs. No gateway, no auth.
  *
  * For each scene it types a query, measures how many result rows are FULLY
@@ -25,43 +25,17 @@
  * Usage: node scripts/capture-settings-nav-search-density.mjs [outDir] [--expect-min N]
  */
 import { chromium } from 'playwright'
-import { mkdirSync, readFileSync, existsSync, statSync } from 'node:fs'
-import { createServer } from 'node:http'
-import { join, extname } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { mkdirSync } from 'node:fs'
+import { join } from 'node:path'
 import { json, makeFixedApi, handleBootRoute } from './lib/boot-api.mjs'
+import { serveDist } from './lib/serve-dist.mjs'
 
 const args = process.argv.slice(2)
 const minIdx = args.indexOf('--expect-min')
 const EXPECT_MIN = minIdx >= 0 ? Number(args[minIdx + 1]) : 0
 const OUT = (minIdx === 0 ? undefined : args[0]) || '/tmp/settings-nav-search-density'
-// fileURLToPath, not URL.pathname: on Windows .pathname yields "/C:/…".
-const DIST = fileURLToPath(new URL('../dist/', import.meta.url))
 
 mkdirSync(OUT, { recursive: true })
-
-const MIME = {
-  '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css',
-  '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png',
-  '.woff2': 'font/woff2', '.woff': 'font/woff', '.ico': 'image/x-icon',
-}
-
-/** Static server with index.html fallback so /settings deep-links resolve. */
-function serveDist() {
-  return new Promise(resolve => {
-    const srv = createServer((req, res) => {
-      const rel = decodeURIComponent(new URL(req.url, 'http://x').pathname).replace(/^\/+/, '')
-      let file = join(DIST, rel)
-      // Loopback-only and ephemeral; an encoded ../ must still not escape dist.
-      if (!file.startsWith(DIST) || !rel || !existsSync(file) || statSync(file).isDirectory()) {
-        file = join(DIST, 'index.html')
-      }
-      res.writeHead(200, { 'Content-Type': MIME[extname(file)] || 'application/octet-stream' })
-      res.end(readFileSync(file))
-    })
-    srv.listen(0, '127.0.0.1', () => resolve({ srv, base: `http://127.0.0.1:${srv.address().port}` }))
-  })
-}
 
 const PROJECT = '/home/user/project'
 const fixedApi = makeFixedApi(PROJECT)
