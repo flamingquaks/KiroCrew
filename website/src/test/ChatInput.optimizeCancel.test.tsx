@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { screen, fireEvent, act } from '@testing-library/react'
 import { renderWithProviders } from './helpers'
 import ChatInput from '../components/ChatInput'
+import { LocalOverlayRoot } from '../components/overlayRoot'
 
 /**
  * While "Optimize prompt" runs, the composer is read-only and Send is disabled
@@ -161,6 +162,179 @@ describe('ChatInput optimize: the in-flight overlay can be cancelled', () => {
     expect(onStop).not.toHaveBeenCalled()
     await vi.waitFor(() => expect(screen.queryByRole('button', { name: 'Cancel optimizing' })).toBeNull())
     expect(textbox.readOnly).toBe(false)
+  })
+
+  describe('Escape while the rich-text composer is locked for an optimize', () => {
+    const mountLexical = async (signals: AbortSignal[], extra: Record<string, unknown> = {}) => {
+      vi.stubGlobal('fetch', hangingOptimizer(signals))
+      const onStop = vi.fn()
+      const props = { value: ORIGINAL, onChange: vi.fn(), onSend: vi.fn(), connected: true, lexicalComposer: true, onStop, ...extra }
+      const view = renderWithProviders(<ChatInput {...props} />)
+      const root = await screen.findByRole('textbox', undefined, LAZY_COMPOSER_MOUNT)
+      // The user is working in this composer when the optimize starts.
+      act(() => { root.focus() })
+      clickOptimize()
+      await vi.waitFor(() => expect(root.getAttribute('contenteditable')).toBe('false'))
+      view.rerender(<ChatInput {...props} isRunning />)
+      return { root, onStop }
+    }
+
+    it('cancels the optimize and does not stop the running turn', async () => {
+      const signals: AbortSignal[] = []
+      const { root, onStop } = await mountLexical(signals)
+      await act(async () => { fireEvent.keyDown(root, { key: 'Escape' }) })
+
+      expect(signals).toHaveLength(1)
+      expect(signals[0].aborted).toBe(true)
+      expect(onStop).not.toHaveBeenCalled()
+      await vi.waitFor(() => expect(screen.queryByRole('button', { name: 'Cancel optimizing' })).toBeNull())
+    })
+
+    it('leaves the optimize running when an IME composition owns the Escape', async () => {
+      const signals: AbortSignal[] = []
+      const { root, onStop } = await mountLexical(signals)
+      await act(async () => { fireEvent.keyDown(root, { key: 'Escape', isComposing: true }) })
+
+      expect(signals[0].aborted).toBe(false)
+      expect(onStop).not.toHaveBeenCalled()
+      expect(screen.getByRole('button', { name: 'Cancel optimizing' })).toBeInTheDocument()
+    })
+
+    it('leaves the optimize running when a dialog owns the Escape', async () => {
+      const signals: AbortSignal[] = []
+      const { root } = await mountLexical(signals)
+      const dialog = document.createElement('div')
+      dialog.setAttribute('role', 'dialog')
+      document.body.appendChild(dialog)
+      try {
+        await act(async () => { fireEvent.keyDown(root, { key: 'Escape' }) })
+        expect(signals[0].aborted).toBe(false)
+      } finally {
+        dialog.remove()
+      }
+    })
+
+    it('leaves the optimize running when the Escape is aimed outside this composer', async () => {
+      const signals: AbortSignal[] = []
+      await mountLexical(signals)
+      // Another pane's control or a sidebar field holds focus.
+      const elsewhere = document.createElement('input')
+      document.body.appendChild(elsewhere)
+      try {
+        await act(async () => { fireEvent.keyDown(elsewhere, { key: 'Escape' }) })
+        expect(signals[0].aborted).toBe(false)
+      } finally {
+        elsewhere.remove()
+      }
+    })
+
+    it('cancels when the locked editor has dropped focus to the page body', async () => {
+      const signals: AbortSignal[] = []
+      await mountLexical(signals)
+      await act(async () => { fireEvent.keyDown(document.body, { key: 'Escape' }) })
+      expect(signals[0].aborted).toBe(true)
+    })
+
+    it('leaves a page-body Escape alone once another pane has taken focus', async () => {
+      const signals: AbortSignal[] = []
+      await mountLexical(signals)
+      // Another pane's composer takes focus, then drops it to the page body.
+      const otherPane = document.createElement('button')
+      document.body.appendChild(otherPane)
+      act(() => { otherPane.focus() })
+      otherPane.remove()
+      await act(async () => { fireEvent.keyDown(document.body, { key: 'Escape' }) })
+      expect(signals[0].aborted).toBe(false)
+    })
+
+    it('marks the Escape spent before the window-level notification banner sees it', async () => {
+      const signals: AbortSignal[] = []
+      // The banner was listening (on window, like NotificationBanner) before the optimize started.
+      const seenByBanner: boolean[] = []
+      const banner = (e: KeyboardEvent) => { seenByBanner.push(e.defaultPrevented) }
+      window.addEventListener('keydown', banner)
+      try {
+        await mountLexical(signals)
+        const cancel = screen.getByRole('button', { name: 'Cancel optimizing' })
+        await act(async () => { fireEvent.keyDown(cancel, { key: 'Escape' }) })
+      } finally {
+        window.removeEventListener('keydown', banner)
+      }
+      expect(signals[0].aborted).toBe(true)
+      expect(seenByBanner).toEqual([true])
+    })
+
+    it('lets a capture-phase owner opened mid-optimize, such as the sidebar flyout, take the Escape', async () => {
+      const signals: AbortSignal[] = []
+      const { root } = await mountLexical(signals)
+      // useHoverIntent's contract: claim Escape in the capture phase and stop it there.
+      let flyoutClosed = false
+      const flyout = (e: KeyboardEvent) => {
+        if (e.key !== 'Escape') return
+        e.preventDefault()
+        e.stopPropagation()
+        flyoutClosed = true
+      }
+      document.addEventListener('keydown', flyout, true)
+      try {
+        await act(async () => { fireEvent.keyDown(root, { key: 'Escape' }) })
+      } finally {
+        document.removeEventListener('keydown', flyout, true)
+      }
+      expect(flyoutClosed).toBe(true)
+      expect(signals[0].aborted).toBe(false)
+    })
+
+    it('leaves a page-body Escape alone while a remote Crew is in front of this one', async () => {
+      const signals: AbortSignal[] = []
+      vi.stubGlobal('fetch', hangingOptimizer(signals))
+      const props = { value: ORIGINAL, onChange: vi.fn(), onSend: vi.fn(), connected: true, lexicalComposer: true }
+      const view = renderWithProviders(<LocalOverlayRoot hidden={false}><ChatInput {...props} /></LocalOverlayRoot>)
+      const root = await screen.findByRole('textbox', undefined, LAZY_COMPOSER_MOUNT)
+      act(() => { root.focus() })
+      clickOptimize()
+      await vi.waitFor(() => expect(root.getAttribute('contenteditable')).toBe('false'))
+      // The user switches to a remote Crew while the optimize runs.
+      view.rerender(<LocalOverlayRoot hidden><ChatInput {...props} /></LocalOverlayRoot>)
+      await act(async () => { fireEvent.keyDown(document.body, { key: 'Escape' }) })
+      expect(signals[0].aborted).toBe(false)
+    })
+
+    it('removes the listener once the optimize ends, so a later Escape reaches nothing', async () => {
+      const signals: AbortSignal[] = []
+      const { onStop } = await mountLexical(signals)
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Cancel optimizing' })) })
+      await vi.waitFor(() => expect(screen.queryByRole('button', { name: 'Cancel optimizing' })).toBeNull())
+      await act(async () => { fireEvent.keyDown(document.body, { key: 'Escape' }) })
+
+      expect(onStop).not.toHaveBeenCalled()
+    })
+  })
+
+  it('cancels once on one Escape in the plain prompt box, never twice', async () => {
+    const signals: AbortSignal[] = []
+    const onStop = vi.fn()
+    vi.stubGlobal('fetch', hangingOptimizer(signals))
+    const props = { value: ORIGINAL, onChange: vi.fn(), onSend: vi.fn(), connected: true, onStop }
+    const { rerender } = renderWithProviders(<ChatInput {...props} />)
+    clickOptimize()
+    await screen.findByRole('button', { name: 'Cancel optimizing' })
+    rerender(<ChatInput {...props} isRunning />)
+    const textbox = screen.getByRole('textbox') as HTMLTextAreaElement
+    const seenByDocument: boolean[] = []
+    const probe = (e: KeyboardEvent) => { seenByDocument.push(e.defaultPrevented) }
+    document.addEventListener('keydown', probe)
+    try {
+      await act(async () => { fireEvent.keyDown(textbox, { key: 'Escape' }) })
+    } finally {
+      document.removeEventListener('keydown', probe)
+    }
+
+    // The textarea's own gate claimed the key, so the document listener skips it.
+    expect(seenByDocument).toEqual([true])
+    expect(signals).toHaveLength(1)
+    expect(signals[0].aborted).toBe(true)
+    expect(onStop).not.toHaveBeenCalled()
   })
 
   it('drops a rewrite whose body was already read when Cancel landed', async () => {

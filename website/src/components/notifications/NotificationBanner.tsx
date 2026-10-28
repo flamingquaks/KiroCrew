@@ -304,8 +304,10 @@ export default function NotificationBanner({ bellRef, popoverOpen, onOpenNote, a
       if (e.key !== 'Escape' || e.defaultPrevented) return
       removeNotes([pending[0].ts])
     }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
+    // On window, so it runs after every document listener: a press another
+    // surface claimed there (the composer cancelling an optimize) is spent.
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
   }, [pending, removeNotes])
 
   // ---- actions ----------------------------------------------------------------

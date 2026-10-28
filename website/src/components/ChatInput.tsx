@@ -9,7 +9,7 @@ import CopyBranchButton from './CopyBranchButton'
 import ProjectAwsProfileStatus from './ProjectAwsProfile'
 import { useSlotRemoteEnvironment } from './sessionEnvironmentHooks'
 import RejectDropdown from './RejectDropdown'
-import { OverlayPortal } from './overlayRoot'
+import { OverlayPortal, useLocalCrewHidden } from './overlayRoot'
 import { useQueryClient } from '@tanstack/react-query'
 import { useBranding } from '../hooks/useBranding'
 import { useAppStore, useAppDispatch } from '../store'
@@ -707,6 +707,38 @@ function ChatInput({
     isRunning, onStop, anyPickerOpenRef, voiceRecording, voiceDrainCancellable, hasApproval, approvalNudgeActive,
     optimizingRef, onCancelOptimize: cancelOptimize,
   })
+  // While an optimize runs the rich-text editor is not editable, and Lexical
+  // drops key events then, so its Escape command never fires (issue #22470).
+  // This listener exists only during an optimize and asks the same gate, which
+  // can only cancel the optimize here and marks the press spent
+  // (preventDefault). It stays in the bubble phase so a capture-phase owner
+  // (the sidebar flyout) keeps first claim; the notification banner listens on
+  // window, after it, and skips a spent press. An Escape the textarea already
+  // claimed arrives defaultPrevented and is skipped, so it never fires twice.
+  // It hears a press aimed inside this composer, or at the page body (where
+  // focus lands once the locked editor drops it) only while this composer was
+  // the last to hold focus, so another pane or a sidebar field keeps its Escape.
+  // While a remote Crew is in front of this one, it stands down entirely.
+  const crewHidden = useLocalCrewHidden()
+  useEffect(() => {
+    if (!optimizing || crewHidden) return
+    let ownsFocus = !!wrapperRef.current?.contains(document.activeElement)
+    const onFocusIn = (e: FocusEvent) => { ownsFocus = !!wrapperRef.current?.contains(e.target as Node) }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return
+      if (!optimizingRef.current) return
+      const target = e.target as Element | null
+      const inside = !!target && !!wrapperRef.current?.contains(target)
+      if (!inside && !(target === document.body && ownsFocus)) return
+      stopTurnOnEscape(e, { native: e, composing: e.isComposing || e.keyCode === 229 })
+    }
+    document.addEventListener('focusin', onFocusIn)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('focusin', onFocusIn)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [optimizing, crewHidden, stopTurnOnEscape])
   const handleKeyDown = useComposerKeyDown({
     rawPasteRef, handleUndoKey, endUndoBurst, handleTokenKey, onMentionKey, promptOptimizer: promptOptimizer && !terminal.active, connected, optimizePrompt: optimizeUnlessLocked, sendOnEnter, onChange, valueFromUserRef, optimizingRef,
     fireComposer, ime, sentMessages, onEditLastRequest, anyPickerOpenRef, promptHistory, valueRef, inputRef, pasteBlocksRef, stopTurnOnEscape,

@@ -591,6 +591,22 @@ describe('NotificationBanner: stack and interaction', () => {
     expect(cards()).toHaveLength(1)
   })
 
+  it('keeps the card when a document listener added after it claims the Escape', () => {
+    // The composer adds its cancel-the-optimize listener only once an optimize
+    // starts, so it registers after the banner. Its press must still be spent
+    // by the time the banner reads it (#22470).
+    renderBanner()
+    arrive(mkN({ title: 'First' }))
+    const laterClaimant = (e: KeyboardEvent) => { if (e.key === 'Escape') e.preventDefault() }
+    document.addEventListener('keydown', laterClaimant)
+    try {
+      fireEvent.keyDown(document.body, { key: 'Escape' })
+    } finally {
+      document.removeEventListener('keydown', laterClaimant)
+    }
+    expect(cards()).toHaveLength(1)
+  })
+
   it('a body click opens the bell on that note and removes the card', () => {
     const n = mkN({ title: 'Open me' })
     const { onOpenNote } = renderBanner()
