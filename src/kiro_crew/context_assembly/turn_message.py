@@ -159,7 +159,9 @@ def build_message(
         if isinstance(candidate_delivery, EssentialDelivery):
             delivery = candidate_delivery
             provider_type = context_provider.context_provider_type
-            if project is None:
+            # A sub-agent's provider cwd is its pool scratch directory, not a
+            # checkout, so a run that named no project keeps none.
+            if project is None and not (session_key or "").startswith("subagent:"):
                 project = context_provider.cwd or None
             if is_new_session or needs_reinjection:
                 provider_native_documents = context_provider.native_context_documents

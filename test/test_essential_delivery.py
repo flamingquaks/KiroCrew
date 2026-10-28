@@ -185,7 +185,12 @@ async def test_actual_wire_fresh_and_twenty_unchanged_warm_turns(env):
 )
 async def test_each_surface_and_minimal_conversation_gets_its_own_receipt(env, surface):
     first, second = provider(env.project), provider(env.project)
-    options = dict(session_key=surface, minimal_context=surface.startswith("cron:"))
+    # Named explicitly: a sub-agent key never adopts the provider cwd as its project.
+    options = dict(
+        session_key=surface,
+        minimal_context=surface.startswith("cron:"),
+        project=str(env.project),
+    )
     await send(first, build(env, first, fresh=True, **options))
     await send(first, build(env, first, **options))
     await send(second, build(env, second, fresh=True, **options))
@@ -993,3 +998,23 @@ async def test_provider_receipt_wrap_and_history_invalidation_contract(env, adap
     await send(target, build(env, target, project=str(env.project)))
     await send(target, build(env, target, project=str(env.project)))
     assert [message.count(HEADER) for message in wire.messages] == [1, 0, 0, 1, 0]
+
+
+@pytest.mark.parametrize(
+    ("session_key", "adopts_cwd"),
+    [("dashboard:private", True), ("subagent:child-1", False)],
+)
+def test_provider_cwd_stands_in_for_project_except_for_subagents(env, session_key, adopts_cwd):
+    # A sub-agent's provider is bound to its pool scratch directory, which is
+    # not a checkout: with no project named, the child must get none.
+    (env.project / "AGENTS.md").write_text("CWD_PROJECT_GUIDE", encoding="utf-8")
+    # The member's template must resolve without a project, as a global spec.
+    global_agents = Path(os.environ["KIRO_HOME"]) / "agents"
+    global_agents.mkdir(parents=True, exist_ok=True)
+    spec = env.project / ".kiro" / "agents" / "writer-template.json"
+    (global_agents / spec.name).write_bytes(spec.read_bytes())
+    target = provider(env.project)
+    message = build(env, target, fresh=True, session_key=session_key)
+    project_line = f"[PROJECT] Active project directory: {env.project}"
+    assert (project_line in message) is adopts_cwd
+    assert ("CWD_PROJECT_GUIDE" in message) is adopts_cwd
