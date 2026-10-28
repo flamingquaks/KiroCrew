@@ -21,8 +21,7 @@ What is held: the password and the one-time code, and the username of a sign-in
 until the page navigates, held copy or not.
 
 A copy is dropped when :data:`HOLD_S` runs out, when the tab's top frame is seen
-on another origin, or when the session's live view stops; a second fill on the
-same origin joins it. It is never logged, stored, published or put in an
+on another origin; a second fill on the same origin joins it. It is never logged, stored, published or put in an
 exception.
 """
 
@@ -153,7 +152,9 @@ _ELLIPSIS = "\u2026"
 
 def _redact(held: Held, value: Any) -> Any:
     if isinstance(value, str):
-        return _cut_tail(held, held.pattern.sub(MASK, value))
+        # The cut is judged on the string as the walker cut it, before a whole
+        # value elsewhere in it is masked (masking first would shorten it).
+        return held.pattern.sub(MASK, _cut_tail(held, value))
     if isinstance(value, dict):
         # Keys are the walker's and the op's own protocol, never page text.
         return {k: _redact(held, v) for k, v in value.items()}
