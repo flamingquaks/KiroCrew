@@ -21,6 +21,7 @@ from typing import Any, NamedTuple
 
 from kiro_crew import agent as agent_mod
 from kiro_crew import agent_state
+from kiro_crew import template_mcp_additions as tma
 from kiro_crew.agent_discovery import skill_resource_uris
 from kiro_crew.agent_files import (
     AGENT_FILENAME,
@@ -833,6 +834,16 @@ def _write_worker_spec(config: dict, path: Path, *, template_grants: list[str]) 
     mcp["kirocrew-work"] = managed_mcp._managed_opt_in_entry("mcp-work")
     config["mcpServers"] = mcp
 
+    # The worker's OWN template additions, merged onto the mirror (never the default:
+    # that would reach every default session), ADD-only and never a grant or an
+    # excluded opt-in set. Their digest joins the recorded generation below.
+    additions_before = tma.mirror_marker(_WORKER_AGENT)
+    added = tma.merge_into_spec(_WORKER_AGENT, config)
+    refused = _drop_servers(config, _worker_unassignable_servers() & frozenset(added))
+    added = [name for name in added if name not in refused]
+    if added:
+        agent_mod.logger.info("worker: merged approved MCP server(s) %s", ", ".join(added))
+
     # Scheduling is subtracted LAST of the grant passes, so it applies to the whole
     # assembled list at once — the default's whole-server cron grant included.
     # ``worker = default + @kirocrew-work − cron scheduling``.
@@ -915,17 +926,22 @@ def _write_worker_spec(config: dict, path: Path, *, template_grants: list[str]) 
         # ``_mcp_lock`` is the default spec's own writer lock, but not every writer of
         # that file takes it, so the coherence check is what makes this pair sound rather
         # than the lock.
-        agent_state.set_mirrored_from(config["name"], _spec_fingerprint(installed_default))
+        agent_state.set_mirrored_from(
+            config["name"],
+            _surface_fingerprint(installed_default, _WORKER_AGENT, additions=additions_before),
+        )
         coherent = (
             default_identity_before is not None
             and default_spec_identity() == default_identity_before
+            and tma.mirror_marker(_WORKER_AGENT) == additions_before
         )
         # CLEARED rather than recorded when the file moved. No identity means no fast
         # path, so the next check compares the truthful fingerprint above against the
         # default as it then stands and re-derives on a mismatch. That direction costs one
         # re-derive; the other starts a worker on a spec nobody verified. A crash between
         # the two writes lands in the same safe place, for the same reason.
-        agent_state.set_mirrored_stat(config["name"], default_identity_before if coherent else None)
+        stat_value = tma.mirror_stat_value(default_identity_before, additions_before)
+        agent_state.set_mirrored_stat(config["name"], stat_value if coherent else None)
     except Exception:  # noqa: BLE001 — an unwritable sidecar costs a re-derive, not the spec
         agent_mod.logger.warning("Could not record the mirrored-from bookkeeping", exc_info=True)
 
@@ -1053,11 +1069,18 @@ def _spec_fingerprint(spec: dict[str, Any] | None) -> str | None:
     return _surface_fingerprint(spec, _WORKER_AGENT)
 
 
-def _surface_fingerprint(spec: dict[str, Any] | None, agent: str) -> str | None:
-    """:func:`_spec_fingerprint` over the surface *agent*'s derived spec copies."""
+def _surface_fingerprint(
+    spec: dict[str, Any] | None, agent: str, *, additions: str | None = None
+) -> str | None:
+    """:func:`_spec_fingerprint` over the surface *agent*'s derived spec copies, plus
+    the worker's own template additions (``template_mcp_additions.mirror_marker``;
+    *additions* is a marker already read). No additions leaves the hash unchanged."""
     if spec is None:
         return None
     mirrored = _without_volatile_mcp_env(_mirrored_surface(spec, agent))
+    marker = tma.mirror_marker(agent) if additions is None else additions
+    if marker:
+        mirrored = {**mirrored, "x-kirocrew-template-additions": marker}
     payload = json.dumps(mirrored, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
@@ -1158,7 +1181,8 @@ def _derived_spec_matches_default(agent: str) -> bool:
     identity = default_spec_identity()
     if (
         identity is not None
-        and agent_state.get_mirrored_stat(agent) == identity
+        and agent_state.get_mirrored_stat(agent)
+        == tma.mirror_stat_value(identity, tma.mirror_marker(agent))
         # Re-stat AFTER the sidecar read. The recorded value is evidence about the file
         # the FIRST stat described, and reading it is itself a window: without this the
         # fast path can answer "provably current" about a default that has already been

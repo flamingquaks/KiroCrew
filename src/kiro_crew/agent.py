@@ -55,7 +55,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, Iterator, Literal, MutableMapping
 
-from kiro_crew import agent_state, platform_compat
+from kiro_crew import agent_state, platform_compat, template_mcp_additions
 from kiro_crew._facade_compose import compose as _facade_compose
 from kiro_crew._facade_compose import rebind as _facade_rebind
 from kiro_crew.agent_discovery import (

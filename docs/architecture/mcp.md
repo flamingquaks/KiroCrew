@@ -882,6 +882,49 @@ reconcile that failed is reported in the danger tint instead of the usual
 user sees is not honesty — the sessions did restart, but against a config that
 may not match the sources, and that is the one thing the caller needs told.
 
+### Per-template MCP additions
+
+A server the user approves for an agent template on a change card is recorded in
+`template_mcp_additions.json` under the data home (`src/kiro_crew/template_mcp_additions.py`):
+owner-only, every write atomic, every read-modify-write under its own lock. It is
+kept outside every spec file because a spec is not where it would survive: the
+conductor installers rebuild their map to exactly the Crew servers on every pass,
+the worker mirrors the default agent, and a third-party installer may rewrite its
+own spec. One record keyed by template name covers every template.
+
+- **No launch line from the agent.** An entry is the gateway-resolved server
+  entry (`command`/`args`/`env` or `url`/`headers`, `type`, `timeout`) plus who
+  approved it, when, and the card id. The caller builds the entry; the record only
+  stores it.
+- **No trust.** `autoApprove`, `allowedTools` and every key outside `ENTRY_KEYS`
+  are refused on write and skipped on read. A merge adds the server and its
+  `@server` mount in `tools`, never a grant, so its tools prompt until the user
+  grants them separately and every grant still passes `_filter_auto_approve`
+  (POLICY ∩ PROFILE unchanged).
+- **One merge, ADD-only.** `merge_into` / `merge_into_spec` is the only path: a
+  name the template already declares keeps its own entry. It runs in the conductor
+  installers (after `_conductor_mcp_servers`), in `_write_worker_spec` (the
+  worker's own entry, after the opt-in exclusions, with its digest folded into the
+  mirror's recorded generation so a removal re-derives the mirror at the next
+  spawn), in `rebuild_agent_config` for the default agent (lowest precedence, before
+  command resolution; `project_into_rendered_spec` retires a removed addition on
+  the next rebuild because that spec is rebuilt from its own file), and at spawn
+  for every other template (`merge_at_spawn`, never written to the file).
+- **Where a template Crew does not own is reached.** At spawn only on
+  `ACP_BACKENDS_TEMPLATE_ADDITIONS_AT_SPAWN` (KAS, claude, codex). kiro-cli loads
+  such a template from its own file with no per-session channel, so
+  `addition_support(template, backend)` answers unsupported there with
+  `UNSUPPORTED_REASON` and the card refuses. Crew-owned templates are merged by
+  their installer and reach every harness.
+- **Reach and removal.** `addition_reach` names every template one addition
+  reaches (the default reaches the worker; the goal conductor and its deprecated
+  alias share one record). `remove_addition(..., card_id=...)` takes away only that
+  card's approval. `kirocrew doctor` lists each template's additions.
+- **Applying it.** The record adds no reload path. After a write, the caller
+  rebuilds the specs and applies the change to running sessions through the gate
+  below (`live_sessions_apply_mcp_live`); a session that cannot apply it live picks
+  it up on the next session.
+
 ### Live reconcile: when no restart is needed at all
 
 kiro-cli 2.10.0+ watches `~/.kiro/agents` and `mcp.json` and reconciles a

@@ -62,6 +62,7 @@ if TYPE_CHECKING:
         migrate_relocated_skill_uris,
         project_agent_names,
         repair_agent_configs,
+        template_mcp_additions,
         resolved_command_casing,
         service_agents,
         spec_path_key,
@@ -661,6 +662,26 @@ def rebuild_agent_config(
     # the Claude Code provider can be re-enabled later without rework; it must
     # not shadow a Kiro-global entry.
     sources = mcp_sources.merge_mcp_sources(config)
+    # The servers the user approved for the default agent on a change card
+    # (``template_mcp_additions``). Lowest precedence: a name any source above
+    # declares keeps that source's entry. Projected BEFORE resolution so an added
+    # server's command is resolved and recorded like every other one. This spec is
+    # rebuilt from its own file, so the projection also retires a name the record
+    # has dropped -- unless a source now declares it. Only ``mcpServers`` and the
+    # ``@server`` mount in ``tools`` move; no grant comes from the record.
+    template_mcp_additions.project_into_rendered_spec(
+        template_mcp_additions.DEFAULT_TEMPLATE,
+        config,
+        claimed=frozenset(
+            {
+                *sources.kirocrew,
+                *sources.kiro_global,
+                *sources.provider_global,
+                *sources.managed_names,
+                *_app_owned_at_start,
+            }
+        ),
+    )
 
     # Resolve MCP commands to absolute paths and validate.
     #

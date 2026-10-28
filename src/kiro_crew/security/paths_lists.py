@@ -970,7 +970,15 @@ _WRITE_PROTECTED_HOME_PATHS += [
     # are written by the gateway, and reading them decides nothing inside the sandbox.
     f"{prefix}/{leaf}"
     for prefix in _CREW_HOME_PREFIXES
-    for leaf in ("mcp-launch-approvals", "mcp/resolved", "gateway_id", "skill-projection")
+    for leaf in (
+        "mcp-launch-approvals",
+        "mcp/resolved",
+        "gateway_id",
+        "skill-projection",
+        # The per-template MCP additions record: what the next rebuild merges into a
+        # template's spec. Written by the gateway or the CLI, outside the sandbox.
+        "template-mcp-additions",
+    )
 ]
 
 

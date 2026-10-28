@@ -505,6 +505,27 @@ entry to decide whether the shared `~/.kiro/agents` specs belong to this
 instance — specs pinned by a different home (or by nobody, or with disagreeing
 pins) refuse the rewrite.
 
+**Servers added to a template from outside its spec.** A server the user approves
+for a template (on a change card) is kept in `template_mcp_additions.json` under
+the data home, keyed by template name, never in the spec file: the conductor
+installers rebuild their `mcpServers` from scratch, and a third-party installer may
+rewrite its own spec. Each entry holds only `command`, `args`, `env`, `url`,
+`headers`, `type` and `timeout` plus who approved it, when, and on which card
+(`template_mcp_additions.ENTRY_KEYS`); `autoApprove`, `allowedTools` and every
+other key are refused on write and skipped on read, so a merge adds a server and
+never trust. Where it is merged, ADD-only (a name the template already declares
+keeps its own entry), with its `@server` mount added to `tools` and nothing added
+to `allowedTools`:
+
+| Template | Merged by | Reaches |
+|---|---|---|
+| `kirocrew` (default) | `rebuild_agent_config`, lowest precedence after every MCP source, before command resolution (`project_into_rendered_spec`; a removed addition is retired from the file on the next rebuild unless a source now declares it) | every harness; also the worker, which mirrors it (`addition_reach`) |
+| `kirocrew-worker` | `_write_worker_spec`, as the worker's own entry, after the opt-in exclusions | every harness; the worker alone. Its digest is part of the mirror's recorded generation, so a changed record re-derives the mirror at the next spawn |
+| the conductors (`kirocrew-conductor` and its `kirocrew-ledger-conductor` alias, `kirocrew-pipeline-conductor`, `kirocrew-security-conductor`) | `conductor_agents._merge_template_additions`, right after `_conductor_mcp_servers` | every harness; the alias reads its successor's record |
+| any other template (third-party, hand-written) | at spawn, never into its file (`merge_at_spawn`): `harness.kas.resolve_projected_spec` and `session_mcp._session_spec_and_snapshot_for` | only `ACP_BACKENDS_TEMPLATE_ADDITIONS_AT_SPAWN` (KAS, claude, codex). **Not kiro-cli**: it loads `--agent` from disk with no per-session channel for a whole spec, and Crew never writes a spec it does not own, so `addition_support` answers unsupported with a reason the card shows |
+
+`kirocrew doctor` lists each template's additions (`mcp additions:` rows).
+
 ### Model
 
 | Field | Type | Effect |

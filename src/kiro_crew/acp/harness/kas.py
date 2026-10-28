@@ -195,7 +195,14 @@ def resolve_projected_spec(
         if not kas_agents_mod.agent_spec_absent(service_dir, agent):
             return kas_agents_mod.load_agent_spec(service_dir, agent), service_dir
     if not kas_agents_mod.agent_spec_absent(agents_dir, agent):
-        return kas_agents_mod.load_agent_spec(agents_dir, agent), agents_dir
+        # A user-level template Crew does not own gets the servers the user approved
+        # for it merged here, at spawn, and never written into its file
+        # (``template_mcp_additions.merge_at_spawn``; a Crew-owned spec already
+        # carries them from its installer, so it comes back unchanged).
+        from kiro_crew.template_mcp_additions import merge_at_spawn
+
+        spec = merge_at_spawn(agent, kas_agents_mod.load_agent_spec(agents_dir, agent))
+        return spec, agents_dir
     # Crewmate scope. A name the user level does NOT declare may be a crewmate's
     # own config in ``~/.kiro/mates/agents/`` (``rfc-mate-owned-agent-config``
     # §5.3): resolution reads this folder, the session agent picker does not, so
