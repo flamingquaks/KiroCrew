@@ -124,7 +124,12 @@
       "decision_rejected": "refusées : {{n}}",
       "decision_rejected_once": "refusées une fois : {{n}}",
       "decision_unknown": "inconnues : {{n}}"
-    }
+    },
+    "worker_group_working": "En cours",
+    "worker_group_waiting": "En attente",
+    "worker_group_done": "Terminé",
+    "worker_group_approval": "Approbation requise",
+    "worker_group_with_conductor": "En attente du chef"
   },
   "terminalTab": {
     "rename": "Renommer",
@@ -9943,6 +9948,12 @@
       "fewerRows": "moins de lignes",
       "moreRows": "plus de lignes"
     },
+    "crewMode": {
+      "chip_off": "Crew Mode",
+      "chip_hint_on": "Désactive Crew Mode. Possible jusqu'à l'envoi de ton premier message.",
+      "eyebrow": "Crew Mode",
+      "composer_chip_label": "Crew Mode est activé pour cette discussion"
+    },
     "guideLayer": {
       "region_label": "Guide",
       "close": "Fermer",
@@ -13186,7 +13197,9 @@
       "broadcast_open_unknown": "Non confirmé · ouvrir",
       "broadcast_delivery_hint": "Aucun travail en cours n’est interrompu : un tour actif le lit après l’appel d’outil en cours ; une session inactive commence un nouveau tour.",
       "broadcast_retry": "Réessayer {{n}} en échec",
-      "folder_renamed_to": "Dossier renommé en {{name}}"
+      "folder_renamed_to": "Dossier renommé en {{name}}",
+      "filter_crew": "Crew Mode",
+      "filter_crew_description": "Afficher uniquement les discussions Crew Mode"
     },
     "connectionsPage": {
       "action_failed": "Échec de l’action : {{error}}",

@@ -115,7 +115,12 @@
       "decision_rejected": "{{n}} अस्वीकार",
       "decision_rejected_once": "{{n}} इस बार अस्वीकार",
       "decision_unknown": "{{n}} अज्ञात"
-    }
+    },
+    "worker_group_working": "चल रहा है",
+    "worker_group_waiting": "इंतज़ार में",
+    "worker_group_done": "पूरा",
+    "worker_group_approval": "स्वीकृति चाहिए",
+    "worker_group_with_conductor": "कंडक्टर की प्रतीक्षा"
   },
   "terminalTab": {
     "rename": "नाम बदलें",
@@ -9799,6 +9804,12 @@
       "fewerRows": "कम पंक्तियाँ",
       "moreRows": "अधिक पंक्तियाँ"
     },
+    "crewMode": {
+      "chip_off": "Crew Mode",
+      "chip_hint_on": "Crew Mode बंद करो। पहला मैसेज भेजने तक ऐसा कर सकते हो।",
+      "eyebrow": "Crew Mode",
+      "composer_chip_label": "इस चैट के लिए Crew Mode चालू है"
+    },
     "guideLayer": {
       "region_label": "गाइड",
       "close": "बंद करो",
@@ -12970,7 +12981,9 @@
       "broadcast_open_unknown": "पुष्टि नहीं · खोलो",
       "broadcast_delivery_hint": "चल रहा काम नहीं रुकता: चालू टर्न इसे मौजूदा टूल कॉल के बाद पढ़ता है; खाली सेशन नया टर्न शुरू करता है।",
       "broadcast_retry": "{{n}} विफल फिर से भेजो",
-      "folder_renamed_to": "फ़ोल्डर का नाम बदलकर {{name}} कर दिया गया"
+      "folder_renamed_to": "फ़ोल्डर का नाम बदलकर {{name}} कर दिया गया",
+      "filter_crew": "Crew Mode",
+      "filter_crew_description": "केवल Crew Mode चैट दिखाओ"
     },
     "connectionsPage": {
       "action_failed": "कार्रवाई विफल: {{error}}",

@@ -124,7 +124,12 @@
       "decision_rejected": "rejeitadas: {{n}}",
       "decision_rejected_once": "rejeitadas uma vez: {{n}}",
       "decision_unknown": "desconhecidas: {{n}}"
-    }
+    },
+    "worker_group_working": "Trabalhando",
+    "worker_group_waiting": "Esperando",
+    "worker_group_done": "Feito",
+    "worker_group_approval": "Aprovação necessária",
+    "worker_group_with_conductor": "Aguardando o maestro"
   },
   "terminalTab": {
     "rename": "Renomear",
@@ -9943,6 +9948,12 @@
       "fewerRows": "menos linhas",
       "moreRows": "mais linhas"
     },
+    "crewMode": {
+      "chip_off": "Crew Mode",
+      "chip_hint_on": "Desative o Crew Mode. Dá para fazer isso até enviar a primeira mensagem.",
+      "eyebrow": "Crew Mode",
+      "composer_chip_label": "O Crew Mode está ativado neste chat"
+    },
     "guideLayer": {
       "region_label": "Guia",
       "close": "Fechar",
@@ -13186,7 +13197,9 @@
       "broadcast_open_unknown": "Não confirmado · abrir",
       "broadcast_delivery_hint": "Nenhum trabalho em andamento é interrompido: um turno ativo lê a mensagem após a chamada de ferramenta atual; uma sessão ociosa começa um novo turno.",
       "broadcast_retry": "Tentar de novo {{n}} com falha",
-      "folder_renamed_to": "Pasta renomeada para {{name}}"
+      "folder_renamed_to": "Pasta renomeada para {{name}}",
+      "filter_crew": "Crew Mode",
+      "filter_crew_description": "Mostrar só chats do Crew Mode"
     },
     "connectionsPage": {
       "action_failed": "Falha na ação: {{error}}",

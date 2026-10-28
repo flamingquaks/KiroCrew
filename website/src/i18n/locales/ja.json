@@ -106,7 +106,12 @@
       "decision_rejected": "拒否 {{n}} 件",
       "decision_rejected_once": "今回のみ拒否 {{n}} 件",
       "decision_unknown": "不明 {{n}} 件"
-    }
+    },
+    "worker_group_working": "実行中",
+    "worker_group_waiting": "待機中",
+    "worker_group_done": "完了",
+    "worker_group_approval": "承認が必要",
+    "worker_group_with_conductor": "指揮役を待っています"
   },
   "terminalTab": {
     "rename": "名前を変更",
@@ -9655,6 +9660,12 @@
       "fewerRows": "行を減らす",
       "moreRows": "行を増やす"
     },
+    "crewMode": {
+      "chip_off": "Crew Mode",
+      "chip_hint_on": "Crew Mode をオフにします。最初のメッセージを送るまでオフにできます。",
+      "eyebrow": "Crew Mode",
+      "composer_chip_label": "このチャットでは Crew Mode がオンです"
+    },
     "guideLayer": {
       "region_label": "ガイド",
       "close": "閉じる",
@@ -12754,7 +12765,9 @@
       "broadcast_open_unknown": "未確認・開く",
       "broadcast_delivery_hint": "実行中の作業は中断されません。実行中のターンは現在のツール呼び出しの後に読み、待機中のセッションは新しいターンを始めます。",
       "broadcast_retry": "失敗した {{n}} 件を再試行",
-      "folder_renamed_to": "フォルダー名を {{name}} に変更しました"
+      "folder_renamed_to": "フォルダー名を {{name}} に変更しました",
+      "filter_crew": "Crew Mode",
+      "filter_crew_description": "Crew Mode のチャットだけを表示"
     },
     "connectionsPage": {
       "action_failed": "操作に失敗しました: {{error}}",

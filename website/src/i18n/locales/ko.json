@@ -106,7 +106,12 @@
       "decision_rejected": "거부 {{n}}건",
       "decision_rejected_once": "이번만 거부 {{n}}건",
       "decision_unknown": "알 수 없음 {{n}}건"
-    }
+    },
+    "worker_group_working": "작업 중",
+    "worker_group_waiting": "대기 중",
+    "worker_group_done": "완료",
+    "worker_group_approval": "승인 필요",
+    "worker_group_with_conductor": "지휘자를 기다리는 중"
   },
   "terminalTab": {
     "rename": "이름 변경",
@@ -9655,6 +9660,12 @@
       "fewerRows": "행 줄이기",
       "moreRows": "행 늘리기"
     },
+    "crewMode": {
+      "chip_off": "Crew Mode",
+      "chip_hint_on": "Crew Mode를 끕니다. 첫 메시지를 보내기 전까지 끌 수 있습니다.",
+      "eyebrow": "Crew Mode",
+      "composer_chip_label": "이 채팅에서 Crew Mode가 켜져 있습니다"
+    },
     "guideLayer": {
       "region_label": "가이드",
       "close": "닫기",
@@ -12754,7 +12765,9 @@
       "broadcast_open_unknown": "확인 안 됨 · 열기",
       "broadcast_delivery_hint": "진행 중인 작업은 중단되지 않아요. 실행 중인 턴은 현재 도구 호출이 끝난 뒤 읽고, 쉬는 세션은 새 턴을 시작해요.",
       "broadcast_retry": "실패한 {{n}}개 다시 보내기",
-      "folder_renamed_to": "폴더 이름이 {{name}}(으)로 변경되었습니다"
+      "folder_renamed_to": "폴더 이름이 {{name}}(으)로 변경되었습니다",
+      "filter_crew": "Crew Mode",
+      "filter_crew_description": "Crew Mode 채팅만 보기"
     },
     "connectionsPage": {
       "action_failed": "작업에 실패했습니다: {{error}}",

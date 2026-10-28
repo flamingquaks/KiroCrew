@@ -106,7 +106,12 @@
       "decision_rejected": "{{n}} 个已拒绝",
       "decision_rejected_once": "{{n}} 个仅拒绝本次",
       "decision_unknown": "{{n}} 个结果未知"
-    }
+    },
+    "worker_group_working": "进行中",
+    "worker_group_waiting": "等待中",
+    "worker_group_done": "已完成",
+    "worker_group_approval": "需要批准",
+    "worker_group_with_conductor": "等待指挥者"
   },
   "terminalTab": {
     "rename": "重命名",
@@ -9655,6 +9660,12 @@
       "fewerRows": "减少行",
       "moreRows": "增加行"
     },
+    "crewMode": {
+      "chip_off": "Crew Mode",
+      "chip_hint_on": "关闭 Crew Mode。发送第一条消息之前都可以关闭。",
+      "eyebrow": "Crew Mode",
+      "composer_chip_label": "这个对话已开启 Crew Mode"
+    },
     "guideLayer": {
       "region_label": "引导",
       "close": "关闭",
@@ -12754,7 +12765,9 @@
       "broadcast_open_unknown": "未确认 · 打开",
       "broadcast_delivery_hint": "不会打断正在进行的工作：运行中的会话在当前工具调用结束后读到；空闲的会话开始新一轮。",
       "broadcast_retry": "重试 {{n}} 个失败的",
-      "folder_renamed_to": "文件夹已重命名为 {{name}}"
+      "folder_renamed_to": "文件夹已重命名为 {{name}}",
+      "filter_crew": "Crew Mode 对话",
+      "filter_crew_description": "只显示 Crew Mode 对话"
     },
     "connectionsPage": {
       "action_failed": "操作失败：{{error}}",

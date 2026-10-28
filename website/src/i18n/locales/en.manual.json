@@ -115,7 +115,12 @@
       "decision_rejected": "{{n}} rejected",
       "decision_rejected_once": "{{n}} rejected once",
       "decision_unknown": "{{n}} unknown"
-    }
+    },
+    "worker_group_working": "Working",
+    "worker_group_waiting": "Waiting",
+    "worker_group_done": "Done",
+    "worker_group_approval": "Approval needed",
+    "worker_group_with_conductor": "Waiting on conductor"
   },
   "terminalTab": {
     "rename": "Rename",
@@ -4012,6 +4017,12 @@
     "runInTerminalBtn": {
       "copied_paste_into_terminal": "Copied — paste it into the terminal"
     },
+    "crewMode": {
+      "chip_off": "Crew Mode",
+      "chip_hint_on": "Turn off Crew Mode. You can do this until you send your first message.",
+      "eyebrow": "Crew Mode",
+      "composer_chip_label": "Crew Mode is on for this chat"
+    },
     "guideLayer": {
       "region_label": "Guide",
       "close": "Close",
@@ -6056,7 +6067,9 @@
       "process_released": "Asleep: wakes on the next message",
       "chat_with_folder": "Chat with {{folder}} folder",
       "chat_with_folder_desc": "The chat that started this folder's other chats",
-      "conductor_tag": "conductor"
+      "conductor_tag": "conductor",
+      "filter_crew": "Crew Mode",
+      "filter_crew_description": "Show only Crew Mode chats"
     },
     "connectionsPage": {
       "action_failed": "Action failed: {{error}}",

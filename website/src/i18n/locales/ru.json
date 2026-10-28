@@ -133,7 +133,12 @@
       "decision_rejected": "отклонено: {{n}}",
       "decision_rejected_once": "отклонено один раз: {{n}}",
       "decision_unknown": "неизвестно: {{n}}"
-    }
+    },
+    "worker_group_working": "Работает",
+    "worker_group_waiting": "Ждёт",
+    "worker_group_done": "Готово",
+    "worker_group_approval": "Нужно одобрение",
+    "worker_group_with_conductor": "Ждёт дирижёра"
   },
   "terminalTab": {
     "rename": "Переименовать",
@@ -10087,6 +10092,12 @@
       "fewerRows": "меньше строк",
       "moreRows": "больше строк"
     },
+    "crewMode": {
+      "chip_off": "Crew Mode",
+      "chip_hint_on": "Выключи Crew Mode. Это можно сделать до отправки первого сообщения.",
+      "eyebrow": "Crew Mode",
+      "composer_chip_label": "В этом чате включён Crew Mode"
+    },
     "guideLayer": {
       "region_label": "Руководство",
       "close": "Закрыть",
@@ -13402,7 +13413,9 @@
       "broadcast_open_unknown": "Не подтверждено · открыть",
       "broadcast_delivery_hint": "Текущая работа не прерывается: активный ход прочитает сообщение после текущего вызова инструмента, простаивающая сессия начнёт новый ход.",
       "broadcast_retry": "Повторить неудавшиеся ({{n}})",
-      "folder_renamed_to": "Папка переименована в {{name}}"
+      "folder_renamed_to": "Папка переименована в {{name}}",
+      "filter_crew": "Crew Mode",
+      "filter_crew_description": "Показывать только чаты Crew Mode"
     },
     "connectionsPage": {
       "action_failed": "Не удалось выполнить действие: {{error}}",

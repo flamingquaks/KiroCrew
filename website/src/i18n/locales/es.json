@@ -124,7 +124,12 @@
       "decision_rejected": "rechazadas: {{n}}",
       "decision_rejected_once": "rechazadas una vez: {{n}}",
       "decision_unknown": "desconocidas: {{n}}"
-    }
+    },
+    "worker_group_working": "Trabajando",
+    "worker_group_waiting": "Esperando",
+    "worker_group_done": "Hecho",
+    "worker_group_approval": "Aprobación necesaria",
+    "worker_group_with_conductor": "Esperando al director"
   },
   "terminalTab": {
     "rename": "Renombrar",
@@ -9943,6 +9948,12 @@
       "fewerRows": "menos filas",
       "moreRows": "más filas"
     },
+    "crewMode": {
+      "chip_off": "Crew Mode",
+      "chip_hint_on": "Desactiva Crew Mode. Puedes hacerlo hasta que envíes tu primer mensaje.",
+      "eyebrow": "Crew Mode",
+      "composer_chip_label": "Crew Mode está activado en este chat"
+    },
     "guideLayer": {
       "region_label": "Guía",
       "close": "Cerrar",
@@ -13186,7 +13197,9 @@
       "broadcast_open_unknown": "Sin confirmar · abrir",
       "broadcast_delivery_hint": "No se interrumpe ningún trabajo en curso: un turno activo lo lee tras la llamada de herramienta actual; una sesión inactiva empieza un turno nuevo.",
       "broadcast_retry": "Reintentar {{n}} fallidos",
-      "folder_renamed_to": "Carpeta renombrada a {{name}}"
+      "folder_renamed_to": "Carpeta renombrada a {{name}}",
+      "filter_crew": "Crew Mode",
+      "filter_crew_description": "Mostrar solo chats de Crew Mode"
     },
     "connectionsPage": {
       "action_failed": "La acción falló: {{error}}",

@@ -124,7 +124,12 @@
       "decision_rejected": "rifiutate: {{n}}",
       "decision_rejected_once": "rifiutate una volta: {{n}}",
       "decision_unknown": "sconosciute: {{n}}"
-    }
+    },
+    "worker_group_working": "In corso",
+    "worker_group_waiting": "In attesa",
+    "worker_group_done": "Fatto",
+    "worker_group_approval": "Approvazione necessaria",
+    "worker_group_with_conductor": "In attesa del direttore"
   },
   "terminalTab": {
     "rename": "Rinomina",
@@ -9943,6 +9948,12 @@
       "fewerRows": "meno righe",
       "moreRows": "più righe"
     },
+    "crewMode": {
+      "chip_off": "Crew Mode",
+      "chip_hint_on": "Disattiva Crew Mode. Puoi farlo finché non invii il primo messaggio.",
+      "eyebrow": "Crew Mode",
+      "composer_chip_label": "Crew Mode è attivo per questa chat"
+    },
     "guideLayer": {
       "region_label": "Guida",
       "close": "Chiudi",
@@ -13186,7 +13197,9 @@
       "broadcast_open_unknown": "Non confermato · apri",
       "broadcast_delivery_hint": "Nessun lavoro in corso viene interrotto: un turno attivo lo legge dopo la chiamata allo strumento in corso; una sessione inattiva avvia un nuovo turno.",
       "broadcast_retry": "Riprova {{n}} non riusciti",
-      "folder_renamed_to": "Cartella rinominata in {{name}}"
+      "folder_renamed_to": "Cartella rinominata in {{name}}",
+      "filter_crew": "Crew Mode",
+      "filter_crew_description": "Mostra solo le chat Crew Mode"
     },
     "connectionsPage": {
       "action_failed": "Azione non riuscita: {{error}}",

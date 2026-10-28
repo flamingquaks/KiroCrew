@@ -115,7 +115,12 @@
       "decision_rejected": "{{n}}টি প্রত্যাখ্যাত",
       "decision_rejected_once": "{{n}}টি শুধু এবার প্রত্যাখ্যাত",
       "decision_unknown": "{{n}}টি অজানা"
-    }
+    },
+    "worker_group_working": "কাজ চলছে",
+    "worker_group_waiting": "অপেক্ষায়",
+    "worker_group_done": "শেষ",
+    "worker_group_approval": "অনুমোদন দরকার",
+    "worker_group_with_conductor": "কন্ডাক্টরের অপেক্ষায়"
   },
   "terminalTab": {
     "rename": "নাম বদলাও",
@@ -9799,6 +9804,12 @@
       "fewerRows": "কম সারি",
       "moreRows": "বেশি সারি"
     },
+    "crewMode": {
+      "chip_off": "Crew Mode",
+      "chip_hint_on": "Crew Mode বন্ধ করো। প্রথম মেসেজ পাঠানোর আগে পর্যন্ত এটা করা যায়।",
+      "eyebrow": "Crew Mode",
+      "composer_chip_label": "এই চ্যাটে Crew Mode চালু আছে"
+    },
     "guideLayer": {
       "region_label": "গাইড",
       "close": "বন্ধ করো",
@@ -12970,7 +12981,9 @@
       "broadcast_open_unknown": "নিশ্চিত নয় · খোলো",
       "broadcast_delivery_hint": "চলমান কাজ থামে না: চালু টার্ন বর্তমান টুল কলের পরে এটি পড়ে; অলস সেশন নতুন টার্ন শুরু করে।",
       "broadcast_retry": "ব্যর্থ {{n}}টি আবার পাঠাও",
-      "folder_renamed_to": "ফোল্ডারের নাম পরিবর্তন করে {{name}} করা হয়েছে"
+      "folder_renamed_to": "ফোল্ডারের নাম পরিবর্তন করে {{name}} করা হয়েছে",
+      "filter_crew": "Crew Mode",
+      "filter_crew_description": "শুধু Crew Mode চ্যাট দেখাও"
     },
     "connectionsPage": {
       "action_failed": "অ্যাকশন ব্যর্থ: {{error}}",

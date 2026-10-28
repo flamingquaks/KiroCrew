@@ -75,6 +75,7 @@
  */
 
 import { i18nT } from '../i18n/t'
+import { store } from '../store'
 
 import { classifyShellCommand, hostOf } from './shellCommandParse'
 import { decodePathForDisplay } from './pathBasename'
@@ -396,8 +397,10 @@ function classifyMcp(inp: ToolCallTitleInput): ClassifiedToolCall | null {
   const tool = inp.toolName || fromTitle?.tool
   if (!tool) return null
   if (!inp.mcpServer && !fromTitle) return null
-  const args = parseToolArgs(inp.rawInput)
-  const arg = salientMcpArg(args)
+  const raw = parseToolArgs(inp.rawInput)
+  // A deferred tool run through tool_search's `tool_call` keeps its own arguments under `arguments`.
+  const inner = raw && typeof raw.tool_id === 'string' && raw.tool_id.endsWith(`::${tool}`) ? parseToolArgs(raw.arguments) : undefined
+  const arg = salientMcpArg(inner ?? raw)
   const title = declaredMcpToolTitle(inp.mcpServer || fromTitle?.server || '', tool)
   return {
     action: { type: 'mcp', tool, ...(title ? { title } : {}), ...(arg ? { arg } : {}) },
@@ -595,7 +598,12 @@ export function renderToolAction(action: ToolAction): string {
       return i18nT('utils.toolCallTitle.view_image', { path: cap(action.path) })
     case 'mcp': {
       const label = action.title || humanizeToolName(action.tool)
-      return action.arg ? i18nT('utils.toolCallTitle.mcp_with_arg', { title: label, arg: action.arg }) : label
+      // A session tool names its target by key; show the session's title instead.
+      const sessionTitle = action.arg && action.tool.startsWith('session_')
+        ? store.getState().dashboard.slots.find(s => s.key === action.arg)?.title
+        : undefined
+      const arg = sessionTitle ? cap(sessionTitle) : action.arg
+      return arg ? i18nT('utils.toolCallTitle.mcp_with_arg', { title: label, arg }) : label
     }
     case 'unknown':
       return action.cmd
