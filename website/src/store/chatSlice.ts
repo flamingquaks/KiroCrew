@@ -631,7 +631,8 @@ export const deleteSlot = createAsyncThunk<
     // tab when it does not.
     let navigation: Promise<unknown> | undefined
     if (root.chat.activeSlot === key) {
-      const sameSurface = new Set(root.dashboard.slots.filter(s => slotSurfaceKey(s) === deletedSurface).map(s => s.key))
+      // A Crew Mode worker is not in the person's list, so it is never where a close lands.
+      const sameSurface = new Set(root.dashboard.slots.filter(s => !s.crew_root && slotSurfaceKey(s) === deletedSurface).map(s => s.key))
       const sidebarSurface = isChatPageSurface(deletedSurface)
         ? new Set(root.dashboard.slots.filter(s => isChatPageSurface(slotSurfaceKey(s))).map(s => s.key))
         : sameSurface
@@ -1062,7 +1063,7 @@ export const {
   setActiveSlot, dropActiveSlot, forkOpenStarted, forkOpenSettled, clearSlotState, setPendingInput, stageToMainComposer, setAgentSwitchNotice, clearUnresumableResume, clearUndeletableHistory, setQuestionCard, clearQuestionCard, setQuestionDraft, setQuestionNotice, setQuestionRequestInFlight, markQuestionSettled, resolveQuestionCard, setFollowupCard, clearFollowupCard, dismissFollowupItem, setFolderSuggestion, clearFolderSuggestion, ageFolderSuggestion, appendMessage, appendSlotMessage, updateStreamingMessage, finalizeAssistant,
   removeThinking, confirmOptimisticSend, markSendUnconfirmed, resolveOptimisticSteer, removeByApprovalId, resolveByApprovalId, clearPendingPermissions, setSlotRunning, setSlotStopping, settleStopNotRunning, startLocalTurn, startServerTurn, endLocalTurn, syncSlotRunningFromServer, setSlotState, setSlotStatusDetail, setStopPressedAt, clearMessages, clearSlotCache, truncateAfterIndex, replaceMessages, hydrateSlotMessages, sseChatMessage, sseChatMessageUpdate, sseChatMessagePatchByTs, sseThinkingChunk, removeQueuedMessage, appendQueuedMessage, cancelQueuedMessage, editQueuedMessage, reorderQueuedMessages,
   sseContextUsage, setVoicePlaying, setVoicePreparing, setVoiceAudio,
-  toggleActivity, openActivityToTab, openActivityPanel, setSidePanelAlwaysOpen, openActivityToTool, clearFocusToolCallId, requestSlotReveal, requestSlotFolderOpen, clearSlotReveal, requestFolderReveal, clearSubagentsForSnapshot, sseSubagentPending, markSubagentApproving, markSubagentApprovalGone, reconcileSubagentApprovalGone, sseSubagentSpawn, sseSubagentTool, sseSubagentStalled, sseSubagentRetrying, sseSubagentDone, sseSubagentQueued, reconcileSubagentQueuedFromSlots,
+  toggleActivity, openActivityToTab, openActivityPanel, closeActivityPanel, setSidePanelAlwaysOpen, openActivityToTool, clearFocusToolCallId, requestSlotReveal, requestSlotFolderOpen, clearSlotReveal, requestFolderReveal, clearSubagentsForSnapshot, sseSubagentPending, markSubagentApproving, markSubagentApprovalGone, reconcileSubagentApprovalGone, sseSubagentSpawn, sseSubagentTool, sseSubagentStalled, sseSubagentRetrying, sseSubagentDone, sseSubagentQueued, reconcileSubagentQueuedFromSlots,
   sseSubagentBatchUpdate, sseSubagentBatchChunks, selectSubagent, clearTerminalSubagents,
   setAutomations, sseAutomation, removeAutomation,
   sseSubagentSnapshot, sseToolActivity, sseToolResult, sseActivityEvent,
